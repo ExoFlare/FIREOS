@@ -1,12 +1,14 @@
 module Ireos
 
+using Base.Threads
+using Distributed
 using ScikitLearn
 using Distances
 
 @sk_import linear_model: LogisticRegression
 @sk_import svm: SVC
 
-const VERSION = "0.0.1"
+const VERSION = "0.0.2"
 const INLIER_CLASS = -1
 const OUTLIER_CLASS = 1
 const MAX_RECURSION_DEPTH = 3
@@ -32,39 +34,40 @@ function ireos(X::AbstractMatrix{<:Number}, clf::String, gamma_min::Float64, gam
     @info "Started IREOS with dataset of size:", size(X), " gamma_min: $gamma_min, gamma_max: $gamma_max, tol: $tol, classifier: $clf, max_recursion_depth: $MAX_RECURSION_DEPTH"
     clf_func = get_classifier_function(clf)
     y = fill(INLIER_CLASS, num_samples)
+    T::AbstractDict{Float64, AbstractMatrix{<:Number}} = Dict{Float64, AbstractMatrix{<:Number}}()
     for i in 1:num_samples
         y[i] = OUTLIER_CLASS
         seperabilities = Dict{Float64, Float64}()
         outlier_index = findfirst(isequal(OUTLIER_CLASS), y)
         @debug "Started IREOS calculation of sample number: $outlier_index"
-        push!(aucs, adaptive_quads(X, y, outlier_index, gamma_min, gamma_max, tol, clf_func, seperabilities))
+        push!(aucs, adaptive_quads(X, y, outlier_index, gamma_min, gamma_max, tol, clf_func, seperabilities, T))
         @debug "IREOS calculation of sample number: $outlier_index successful"
         y[i] = INLIER_CLASS
     end
     return aucs
 end
 
-function adaptive_quads(X, y, outlier_index, a::Float64, b::Float64, tol::Float64, clf_func, seperabilities, current_recursion_depth = 0)
+function adaptive_quads(X, y, outlier_index, a, b, tol, clf_func, seperabilities, T, current_recursion_depth = 0)
     m = (a + b) / 2
-    err_all = simpson_rule(X, y, outlier_index, a, b, clf_func, seperabilities)
-    err_new = simpson_rule(X, y, outlier_index, a, m, clf_func, seperabilities) + simpson_rule(X, y, outlier_index, m, b, clf_func, seperabilities)
-    calculated_error = abs(err_all - err_new) / 15
+    err_all = simpson_rule(X, y, outlier_index, a, b, clf_func, seperabilities, T)
+    err_new = simpson_rule(X, y, outlier_index, a, m, clf_func, seperabilities, T) + simpson_rule(X, y, outlier_index, m, b, clf_func, seperabilities, T)
+    calculated_error = (err_all - err_new) / 15
     if tol < calculated_error && current_recursion_depth < MAX_RECURSION_DEPTH
         @debug "Iteration depth: $current_recursion_depth. Criterion not reached: $calculated_error > $tol"
-        return adaptive_quads(X, y, outlier_index, a, m, tol / 2, clf_func, seperabilities, current_recursion_depth+1) + adaptive_quads(X, y, outlier_index, m, b, tol/2, clf_func, seperabilities, current_recursion_depth+1)
+        return adaptive_quads(X, y, outlier_index, a, m, tol / 2, clf_func, seperabilities, T, current_recursion_depth+1) + adaptive_quads(X, y, outlier_index, m, b, tol/2, clf_func, seperabilities, T, current_recursion_depth+1)
     else
         @debug "Termination criterion of $calculated_error < $tol OR Recursion depth $current_recursion_depth / $MAX_RECURSION_DEPTH reached."
         return err_new
     end
 end
 
-function simpson_rule(X, y, outlier_index, a, b, clf_func, seperabilities)
+function simpson_rule(X, y, outlier_index, a, b, clf_func, seperabilities, T)
     h = (b - a) / 2
     for i in [a, a+h, b]
         if i in keys(seperabilities)
             continue
         end
-        clf, current_sample = clf_func(X, y, outlier_index, i)
+        clf, current_sample = clf_func(X, y, outlier_index, i, T)
         p_index = findfirst(isequal(OUTLIER_CLASS), clf.classes_)
         p_outlier = predict_proba(clf, current_sample')[p_index]
         
@@ -86,34 +89,41 @@ function get_classifier_function(clf::String)
     end
 end
 
-function get_logreg_clf(X, y, outlier_index, gamma)
+function get_logreg_clf(X, y, outlier_index, gamma, T)
     clf = LogisticRegression(random_state=123, tol=0.0095, max_iter=1000000)
-    R = rbf_kernel(X, gamma)
-     
+
+    if !haskey(T, gamma)
+        @debug "Gamma: $gamma missing.. Calculating R-Matrix"
+        T[gamma] = rbf_kernel(X, gamma)
+    end
     #self.ireos_data.set_current_sample(R[self.ireos_data.get_index()].reshape(1, -1))
-    fit!(clf, R, y)
-    current_sample = reshape(R[outlier_index, :] , (size(R)[2],1))
+    fit!(clf, T[gamma], y)
+    current_sample = reshape(T[gamma][outlier_index, :] , (size(T[gamma])[2],1))
     return clf, current_sample
 end
 
-function get_svm_clf(X, y, outlier_index, gamma)
-    #SVC cannot dea lwith gamma == 0
+function get_svm_clf(X, y, outlier_index, gamma, T)
+    #SVC cannot deal with gamma == 0
     if gamma == 0.0
         gamma = 0.0001
     end
+
     clf = SVC(gamma=gamma, probability=true, C=100, random_state=123, tol=0.0095, max_iter=1000000)
     fit!(clf, X, y)
     current_sample = reshape(X[outlier_index, :] , (size(X)[2],1))
     return clf, current_sample
 end
 
-function get_klr_clf(X, y, outlier_index, gamma)
+function get_klr_clf(X, y, outlier_index, gamma, T)
     # param set closest to the paper (liblinear returns non-zero values for gamma = 0)
     clf = LogisticRegression(class_weight="balanced", tol=0.0095, solver = "saga", C=100, max_iter=1000000, random_state=123)
-    R = rbf_kernel(X, gamma)
+    if !haskey(T, gamma)
+        @debug "Gamma: $gamma missing.. Calculating R-Matrix"
+        T[gamma] = rbf_kernel(X, gamma)
+    end
     #self.ireos_data.set_current_sample(R[self.ireos_data.get_index()].reshape(1, -1))
-    fit!(clf, R, y)
-    current_sample = reshape(R[outlier_index, :] , (size(R)[2],1))
+    fit!(clf, T[gamma], y)
+    current_sample = reshape(T[gamma][outlier_index, :] , (size(T[gamma])[2],1))
     return clf, current_sample
 end
 
@@ -130,5 +140,7 @@ evaluate_solution(ireos, solution, gamma_min, gamma_max) = sum(ireos .* solution
 
 # radial basis function: K(x, y) = exp(-gamma ||x-y||^2)
 rbf_kernel(X, gamma) = exp.(-gamma * pairwise(SqEuclidean(), X, dims=1))
+
+println("Package Ireos loaded")
 
 end
