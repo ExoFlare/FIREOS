@@ -13,6 +13,8 @@ const INLIER_CLASS = -1
 const OUTLIER_CLASS = 1
 const MAX_RECURSION_DEPTH = 3
 
+
+
 #=struct IREOSSample
     index::UInt8
     separabilities::ImmutableDict
@@ -34,33 +36,13 @@ function ireos(X::AbstractMatrix{<:Number}, clf::String, gamma_min::Float64, gam
     @info "Started IREOS with dataset of size:", size(X), " gamma_min: $gamma_min, gamma_max: $gamma_max, tol: $tol, classifier: $clf, max_recursion_depth: $MAX_RECURSION_DEPTH"
     clf_func = get_classifier_function(clf)
     y = fill(INLIER_CLASS, num_samples)
-    seperabilities = Dict{Float64, Float64}()
     T::AbstractDict{Float64, AbstractMatrix{<:Number}} = Dict{Float64, AbstractMatrix{<:Number}}()
     for i in 1:num_samples
+        seperabilities = Dict{Float64, Float64}()
         y[i] = OUTLIER_CLASS
         @debug "Started IREOS calculation of sample number: $i"
         push!(aucs, adaptive_quads(X, y, i, gamma_min, gamma_max, tol, clf_func, seperabilities, T))
         @debug "IREOS calculation of sample number: $i successful"
-        y[i] = INLIER_CLASS
-    end
-    return aucs
-end
-
-function ireos_par(X::AbstractMatrix{<:Number}, clf::String, gamma_min::Float64, gamma_max::Float64, tol::Float64)
-    aucs = Vector{Float64}()
-    num_samples = size(X)[1]
-    @assert num_samples == size(X)[1]
-    @info "Started Parallel IREOS with dataset of size:", size(X), " gamma_min: $gamma_min, gamma_max: $gamma_max, tol: $tol, classifier: $clf, max_recursion_depth: $MAX_RECURSION_DEPTH on ", nthreads(), "threads"
-    clf_func = get_classifier_function(clf)
-    T::AbstractDict{Float64, AbstractMatrix{<:Number}} = Dict{Float64, AbstractMatrix{<:Number}}()
-    seperabilities = Dict{Float64, Float64}()
-    Threads.@threads for i in 1:num_samples
-        y = fill(INLIER_CLASS, num_samples)
-        y[i] = OUTLIER_CLASS
-        outlier_index = findfirst(isequal(OUTLIER_CLASS), y)
-        @debug "Started IREOS calculation of sample number: $outlier_index"
-        push!(aucs, adaptive_quads(X, y, outlier_index, gamma_min, gamma_max, tol, clf_func, seperabilities, T))
-        @debug "IREOS calculation of sample number: $outlier_index successful"
         y[i] = INLIER_CLASS
     end
     return aucs
@@ -132,6 +114,7 @@ function get_svm_clf(X, y, outlier_index, gamma, T)
     current_sample = reshape(X[outlier_index, :] , (size(X)[2],1))
     return clf, current_sample
 end
+
 
 function get_klr_clf(X, y, outlier_index, gamma, T)
     # param set closest to the paper (liblinear returns non-zero values for gamma = 0)
