@@ -4,11 +4,13 @@ using Base.Threads
 using Distributed
 using ScikitLearn
 using Distances
+using LIBSVM
+using LIBLINEAR
 
 @sk_import linear_model: LogisticRegression
 @sk_import svm: SVC
 
-const VERSION = "0.0.3"
+const VERSION = "0.0.4"
 const INLIER_CLASS = -1
 const OUTLIER_CLASS = 1
 const MAX_RECURSION_DEPTH = 3
@@ -29,23 +31,56 @@ struct IREOSData
     current_recursion_depth::UInt8
 end=#
 
-function ireos(X::AbstractMatrix{<:Number}, clf::String, gamma_min::Float64, gamma_max::Float64, tol::Float64)
+function ireos(X::AbstractMatrix{<:Number}, clf::String, gamma_min::Float64, gamma_max::Float64, tol::Float64, window_size::Union{Int32, Nothing}=nothing)
     aucs = Vector{Float64}()
+    window_mode = false
     num_samples = size(X)[1]
-    @assert num_samples == size(X)[1]
-    @info "Started IREOS with dataset of size:", size(X), " gamma_min: $gamma_min, gamma_max: $gamma_max, tol: $tol, classifier: $clf, max_recursion_depth: $MAX_RECURSION_DEPTH"
+    if !isnothing(window_size)
+        @assert window_size <= num_samples
+        window_mode = true
+    end
+    @info "Started IREOS with dataset of size:", size(X), "window size: $window_size, gamma_min: $gamma_min, gamma_max: $gamma_max, tol: $tol, classifier: $clf, max_recursion_depth: $MAX_RECURSION_DEPTH"
     clf_func = get_classifier_function(clf)
-    y = fill(INLIER_CLASS, num_samples)
+    if window_mode
+        y = fill(INLIER_CLASS, window_size)
+    else
+        y = fill(INLIER_CLASS, num_samples)
+    end
     T::AbstractDict{Float64, AbstractMatrix{<:Number}} = Dict{Float64, AbstractMatrix{<:Number}}()
     for i in 1:num_samples
         seperabilities = Dict{Float64, Float64}()
-        y[i] = OUTLIER_CLASS
+        if window_mode
+            outlier_index = i <= window_size ? i : window_size
+            idx_start = get_start_idx(i, window_size, num_samples)
+            idx_end = idx_start + window_size - 1
+            data = X[idx_start:idx_end,:]
+            y[outlier_index] = OUTLIER_CLASS
+            @debug "windowed mode: index_start: $idx_start, index_end: $idx_end"
+        else
+            outlier_index = i
+            data = X
+            y[i] = OUTLIER_CLASS
+        end
         @debug "Started IREOS calculation of sample number: $i"
-        push!(aucs, adaptive_quads(X, y, i, gamma_min, gamma_max, tol, clf_func, seperabilities, T))
+        push!(aucs, adaptive_quads(data, y, outlier_index, gamma_min, gamma_max, tol, clf_func, seperabilities, T))
         @debug "IREOS calculation of sample number: $i successful"
-        y[i] = INLIER_CLASS
+        if window_mode
+            y[outlier_index] = INLIER_CLASS
+        else
+            y[i] = INLIER_CLASS
+        end
     end
     return aucs
+end
+
+function get_start_idx(current_index, window_size, size_all)
+    if current_index <= window_size
+        return 1
+    elseif current_index > size_all - window_size
+        return size_all - (window_size - 1)
+    else
+        return current_index - (window_size - 1)
+    end
 end
 
 function adaptive_quads(X, y, outlier_index, a, b, tol, clf_func, seperabilities, T, current_recursion_depth = 0)
@@ -68,9 +103,7 @@ function simpson_rule(X, y, outlier_index, a, b, clf_func, seperabilities, T)
         if i in keys(seperabilities)
             continue
         end
-        clf, current_sample = clf_func(X, y, outlier_index, i, T)
-        p_index = findfirst(isequal(OUTLIER_CLASS), clf.classes_)
-        p_outlier = predict_proba(clf, current_sample')[p_index]
+        p_outlier = clf_func(X, y, outlier_index, i, T)
         
         @debug "$outlier_index: gamma $i : p-value: $p_outlier"
         seperabilities[i] = p_outlier
@@ -85,9 +118,18 @@ function get_classifier_function(clf::String)
         return get_logreg_clf
     elseif clf == "klr"
         return get_klr_clf
+    elseif clf == "libsvm"
+        return get_libsvm
     else
         @error "Unknown classifier $clf"
     end
+end
+
+function predict_sk_clf_proba(clf, X, y, gamma, outlier_index)
+    fit!(clf, X, y)
+    current_sample = reshape(X[outlier_index, :] , (size(X)[2],1))
+    p_index = findfirst(isequal(OUTLIER_CLASS), clf.classes_)
+    return predict_proba(clf, current_sample')[p_index]
 end
 
 function get_logreg_clf(X, y, outlier_index, gamma, T)
@@ -97,10 +139,7 @@ function get_logreg_clf(X, y, outlier_index, gamma, T)
         @debug "Gamma: $gamma missing.. Calculating R-Matrix"
         T[gamma] = rbf_kernel(X, gamma)
     end
-    #self.ireos_data.set_current_sample(R[self.ireos_data.get_index()].reshape(1, -1))
-    fit!(clf, T[gamma], y)
-    current_sample = reshape(T[gamma][outlier_index, :] , (size(T[gamma])[2],1))
-    return clf, current_sample
+    return predict_sk_clf_proba(clf, T[gamma], y, gamma, outlier_index)
 end
 
 function get_svm_clf(X, y, outlier_index, gamma, T)
@@ -110,9 +149,7 @@ function get_svm_clf(X, y, outlier_index, gamma, T)
     end
     @debug "Thread", threadid(), "Gamma: $gamma, X: ", size(X), "y: ", size(y), "Outlier-Index:", findfirst(isequal(OUTLIER_CLASS), y)
     clf = SVC(gamma=gamma, class_weight="balanced", probability=true, C=100, random_state=123, tol=0.0095, max_iter=-1)
-    fit!(clf, X, y)
-    current_sample = reshape(X[outlier_index, :] , (size(X)[2],1))
-    return clf, current_sample
+    return predict_sk_clf_proba(clf, X, y, gamma, outlier_index)
 end
 
 
@@ -124,9 +161,14 @@ function get_klr_clf(X, y, outlier_index, gamma, T)
         T[gamma] = rbf_kernel(X, gamma)
     end
     #self.ireos_data.set_current_sample(R[self.ireos_data.get_index()].reshape(1, -1))
-    fit!(clf, T[gamma], y)
-    current_sample = reshape(T[gamma][outlier_index, :] , (size(T[gamma])[2],1))
-    return clf, current_sample
+    return predict_sk_clf_proba(clf, T[gamma], y, gamma, outlier_index)
+end
+
+function get_libsvm(X, y, outlier_index, gamma, T)
+    clf = svmtrain(X', y, gamma=gamma, probability=true)
+    current_sample = reshape(X[outlier_index, :] , (size(X)[2],1))
+    p_index = findfirst(isequal(OUTLIER_CLASS), clf.labels)
+    return svmpredict(clf, current_sample)[2][p_index]
 end
 
 function evaluate_solutions(ireos, solutions, gamma_min, gamma_max)
