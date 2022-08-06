@@ -37,9 +37,14 @@ function run()
     "complex_7", "complex_8", "complex_9", "high-noise_1", "high-noise_10", "high-noise_11", "high-noise_12", "high-noise_13", 
     "high-noise_14", "high-noise_15", "high-noise_16", "high-noise_17", "high-noise_18", "high-noise_19", "high-noise_2", 
     "high-noise_20", "high-noise_3", "high-noise_4", "high-noise_5", "high-noise_6", "high-noise_7", "high-noise_8", "high-noise_9", 
-    "low-noise_1", "low-noise_10", "low-noise_11", "low-noise_12", "low-noise_13", "low-noise_14", "low-noise_15", "low-noise_16", 
+    "dens-diff_1", "dens-diff_10", "dens-diff_11", "dens-diff_12", "dens-diff_13", "dens-diff_14", "dens-diff_15", "dens-diff_16", 
+    "dens-diff_17", "dens-diff_18", "dens-diff_19", "dens-diff_2", "dens-diff_20", "dens-diff_3", "dens-diff_4", "dens-diff_5", 
+    "dens-diff_6", "dens-diff_7", "dens-diff_8", "dens-diff_9",
+	"low-noise_1", "low-noise_10", "low-noise_11", "low-noise_12", "low-noise_13", "low-noise_14", "low-noise_15", "low-noise_16", 
     "low-noise_17", "low-noise_18", "low-noise_19", "low-noise_2", "low-noise_20", "low-noise_3", "low-noise_4", "low-noise_5", 
     "low-noise_6", "low-noise_7", "low-noise_8", "low-noise_9"]
+
+    #global names = ["my_test"]
 
     clfs = ["decision_tree_native", "decision_tree_sklearn", "random_forest_native", "random_forest_sklearn", "liblinear"]
     clfs_par = ["libsvm"]
@@ -60,25 +65,27 @@ function run()
     for d in 1:length(names)
         current_dataset_name = names[d]
         result_df = create_empty_result_df()
+        result_file_name = results_dir * current_dataset_name * ".csv"
+        if isfile(result_file_name)
+            @info "IREOS for Dataset: $current_dataset_name already calculated. Skipping.."
+            continue
+        end
         global data = readdlm(data_dir * current_dataset_name,',', Float64, '\n')
+        global solutions = nothing
+        #FIXME!!! Scaling!
         global solutions = readdlm(scorings_dir * current_dataset_name * ".csv",',', Float64, '\n', header=true)
-        Ireos.normalize_solutions!(solutions, norm_method)
+        #Ireos.normalize_solutions!(solutions, norm_method)
         writedlm(scaled_dir * current_dataset_name * ".csv", vcat(solutions[2], solutions[1]), ",")
         for i in 1:ITERATIONS
             for clf in clfs
                 for adaptive_quads_enabled_mode in adaptive_quads_modes
                     for window_mode in window_modes
                         ireos_file_name = ireos_dir * current_dataset_name * "-" * clf * "-" * string(window_mode) * "-" * string(adaptive_quads_enabled_mode) * "-sequential.csv"
-                        if isfile(ireos_file_name)
-                            @debug "IREOS for Dataset: $current_dataset_name, $clf with parameters adaptive_quads_enabled:$adaptive_quads_enabled_mode, window_mode:$window_mode already calculated.Skipping.."
-                            continue
-                        end
                         time = @elapsed begin 
                             results, trained = execute_sequential_experiment(data, solutions, clf, gamma_min, tol, isnothing(window_mode) ? 1.0 : window_mode, adaptive_quads_enabled_mode)
                         end
                         println(time)
-                        push!(result_df, (current_dataset_name, clf, adaptive_quads_enabled_mode, isnothing(window_mode) ? 1.0 : window_mode, false, time
-                        , results[1], results[2], results[3], results[4], results[5], results[6], results[7]))
+                        push_row!(result_df, current_dataset_name, clf, adaptive_quads_enabled_mode, window_mode, time, results)
                         if persist_intermediate_result
                             writedlm(ireos_file_name , trained)
                         end
@@ -97,13 +104,14 @@ function run()
                     results, trained = execute_parallel_experiment(data, solutions, clf, gamma_min, gamma_max, tol)
                 end
                 println(time)
-                push!(result_df, (current_dataset_name, clf, true, 1.0 , true, time, results[1], results[2], results[3], results[4], results[5], results[6], results[7]))
+                #push_row!(result_df, current_dataset_name, clf, true, 1.0 , time, results)
                 if persist_intermediate_result
                     writedlm(ireos_file_name , trained)
                 end
             end
         end
-        CSV.write(results_dir * current_dataset_name * ".csv", result_df)
+        #Uncomment for saving evaluated solutions
+        CSV.write(result_file_name, result_df)
     end
     return result_df
 end
@@ -111,8 +119,12 @@ end
 create_empty_result_df() = DataFrame(dataset = [], clf = String[], adaptive_quads_enabled = Bool[], window_ratio = Float64[], is_parallel = Bool[], time = Float64[]
 , ireos_sdo = Float64[], ireos_abod = Float64[], ireos_hbos = Float64[], ireos_iforest = Float64[], ireos_knn = Float64[], ireos_lof = Float64[], ireos_ocsvm = Float64[])
 
+push_row!(df, current_dataset_name, clf, adaptive_quads_enabled_mode, window_mode, time, results) = push!(df, (current_dataset_name, clf, adaptive_quads_enabled_mode, isnothing(window_mode) ? 1.0 : window_mode, false, time
+, results[1], length(results) > 1 ? results[2] : -1.0, length(results) > 2 ? results[3] : -1.0, length(results) > 3 ? results[4] : -1.0
+, length(results) > 4 ? results[5] : -1.0, length(results) > 5 ? results[6] : -1.0, length(results) > 6 ? results[7] : -1.0))
+
 function calculate_gamma_max(X, clf, adaptive_quads_enabled)
-    if clf in ["liblinear", "decision_tree_sklearn", "random_forest_native", "random_forest_sklearn"]
+    if clf in ["liblinear", "decision_tree_native", "decision_tree_sklearn", "random_forest_native", "random_forest_sklearn"]
         return 1.0
     elseif adaptive_quads_enabled
         # rowwise distance
@@ -135,16 +147,19 @@ function execute_sequential_experiment(data, solutions, clf, gamma_min, tol, win
     if !adaptive_quads_enabled
         eval_gamma = 1.0
     end
-    return Ireos.evaluate_solutions(trained, solutions[1]', gamma_min, eval_gamma), trained
+    return create_result(Ireos.evaluate_solutions, trained, solutions, gamma_min, eval_gamma)
 end
 
 function execute_parallel_experiment(data, solutions, clf, gamma_min, gamma_max, tol)
     trained = IreosPar.ireos_par(data, clf, gamma_min, gamma_max, tol)
-    return IreosPar.evaluate_solutions_par(trained, solutions[1]', gamma_min, gamma_max), trained
+    return create_result(IreosPar.evaluate_solutions_par, trained, solutions, gamma_min, gamma_max)
 end
+
+create_result(ireos_evaluation_func, trained, solutions, gamma_min, gamma_max) = isnothing(solutions) ? nothing : 
+ireos_evaluation_func(trained, solutions[1]', gamma_min, gamma_max) , trained / (gamma_max - gamma_min)
 
 # change default for `seconds` to 2.5
 #println(nworkers())
 println(Threads.nthreads())
-result_df = run()
+run()
 #rmprocs(4)

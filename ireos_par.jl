@@ -162,6 +162,9 @@ function get_libsvm_par(X, y, outlier_index, gamma, T)
 end
 
 function evaluate_solutions_par(ireos, solutions, gamma_min, gamma_max)
+    if isnothing solutions
+        return Nothing
+    end
     @info "Started IREOS Evaluation:"
     results = ThreadSafeDict{Int, Float64}()
     Threads.@threads for i in 1:size(solutions)[1]

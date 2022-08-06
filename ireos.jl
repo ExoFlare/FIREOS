@@ -260,6 +260,9 @@ function get_random_forest_sklearn(X, y, outlier_index, gamma, T)
 end
 
 function evaluate_solutions(ireos, solutions, gamma_min, gamma_max)
+    if isnothing solutions
+        return Nothing
+    end
     @info "Started IREOS Evaluation:"
     results = Dict{Int, Float64}()
     for i in 1:size(solutions)[1]
