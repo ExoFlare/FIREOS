@@ -1,3 +1,7 @@
+"""
+Main implementation of sequential IREOS
+"""
+
 module Ireos
 
 using StatsBase
@@ -13,28 +17,31 @@ using DecisionTree
 @sk_import svm: SVC
 
 const VERSION = "0.0.5"
+
+#Inlier and outlier labels
 const INLIER_CLASS = -1
 const OUTLIER_CLASS = 1
+
+#maximum recursion depth for adaptive quadrature
 const MAX_RECURSION_DEPTH = 3
 
+#fixed seed for experiments being reproducable
 const SEED = 123
 
-
-
-#=struct IREOSSample
-    index::UInt8
-    separabilities::ImmutableDict
-    num_samples::UInt8
-    y::Vector{Float64}
-    current_sample::Vector{Float64}
-end
-
-struct IREOSData
-    samples::Vector{IREOSSample}
-    clf
-    current_recursion_depth::UInt8
-end=#
-
+"""
+main ireos function
+...
+# Arguments
+- `X::AbstractMatrix{<:Number}`: numerical input matrix of data having size (n x m)
+- `clf::String`: internal predictor string
+- `gamma_min::Float64`: minimum gamma for models using gamma hyperparameter
+- `gamma_max::Float64`: maximum gamma for models using gamma hyperparameter
+- `tol::Float64`: epsilon: termination condition for adaptive quadrature
+- `window_size::Union{Int32, Nothing}`: window ratio or nothing for no window
+- `adaptive_quads_enabled::Bool`: true if adaptive quadrature calculation enabled else false
+......` 
+returns aucs::Vector{Float64}: numerical vector of separabilities having size n
+"""
 function ireos(X::AbstractMatrix{<:Number}, clf::String, gamma_min::Float64, gamma_max::Float64, tol::Float64, window_size::Union{Int32, Nothing}=nothing, adaptive_quads_enabled::Bool=true)
     window_mode = false
     num_samples = size(X)[1]
@@ -81,6 +88,16 @@ function ireos(X::AbstractMatrix{<:Number}, clf::String, gamma_min::Float64, gam
     return aucs
 end
 
+"""
+helper function for calculating the start index in a sliding window
+...
+# Arguments
+- `current_index`: current sample
+- `window_size`: window ratio
+- `size_all`: overall size of teh dataset
+......` 
+returns starting index of sliding window
+"""
 function get_start_idx(current_index, window_size, size_all)
     if current_index <= window_size
         return 1
@@ -91,6 +108,23 @@ function get_start_idx(current_index, window_size, size_all)
     end
 end
 
+"""
+function for applying adaptive quadrature and simpsons rule for calculating the area und the curve
+...
+# Arguments
+- `X`: feature matrix of input data
+- `y`: target vector of input matrix
+- `outlier_index`: current index of outlier
+- `a`: lower gamma value of adaptive quadrature
+- `b`: higher gamma value of adaptive quadrature
+- `tol`: error rate epsilon, maximum error
+- `clf_func`: function of predictor to be used
+- `seperabilities`: map of already calculated separabilities for given gammas
+- `T`: precomputed transformed matrix or nothing
+- `current_recursion_depth`: current depth of recursion, must be smaller than $MAX_RECURSION_DEPTH
+......` 
+returns area under the curve of separabilities of given outlier and predictor
+"""
 function adaptive_quads(X, y, outlier_index, a, b, tol, clf_func, seperabilities, T, current_recursion_depth = 0)
     m = (a + b) / 2
     err_all = simpson_rule(X, y, outlier_index, a, b, clf_func, seperabilities, T)
@@ -105,6 +139,21 @@ function adaptive_quads(X, y, outlier_index, a, b, tol, clf_func, seperabilities
     end
 end
 
+"""
+function for calculation of Simpson's rule
+...
+# Arguments
+- `X`: feature matrix of input data
+- `y`: target vector of input matrix
+- `outlier_index`: current index of outlier
+- `a`: lower gamma value of adaptive quadrature
+- `b`: higher gamma value of adaptive quadrature
+- `clf_func`: function of predictor to be used
+- `seperabilities`: map of already calculated separabilities for given gammas
+- `T`: precomputed transformed matrix or nothing
+......` 
+returns result of simpson's rule of given interval a and b
+"""
 function simpson_rule(X, y, outlier_index, a, b, clf_func, seperabilities, T)
     h = (b - a) / 2
     for i in [a, a+h, b]
@@ -118,6 +167,14 @@ function simpson_rule(X, y, outlier_index, a, b, clf_func, seperabilities, T)
     return (h / 3) * (seperabilities[a] + 4 * seperabilities[a + h] + seperabilities[b])
 end
 
+"""
+function for getting the correnponsing classifier function by given string
+...
+# Arguments
+- `clf`: predictor string
+......` 
+returns classifier function
+"""
 function get_classifier_function(clf::String)
     if clf == "svc"
         return get_svm_clf
@@ -142,6 +199,18 @@ function get_classifier_function(clf::String)
     end
 end
 
+"""
+function for predicting probabilities of sklearn predictors
+...
+# Arguments
+- `clf`: classifier function
+- `X`: feature matrix of input data
+- `y`: target vector of input matrix
+- `gamma`: not used in sklearn predictors
+- `outlier_index`: index of current outlier
+......` 
+returns probability that outlier sample is classified as outlier
+"""
 function predict_sk_clf_proba(clf, X, y, gamma, outlier_index)
     fit!(clf, X, y)
     current_sample = reshape(X[outlier_index, :] , (size(X)[2],1))
@@ -149,6 +218,18 @@ function predict_sk_clf_proba(clf, X, y, gamma, outlier_index)
     return predict_proba(clf, current_sample')[p_index]
 end
 
+"""
+function for predicting probabilities using logistic regression
+...
+# Arguments
+- `X`: feature matrix of input data
+- `y`: target vector of input matrix
+- `outlier_index`: index of current outlier
+- `gamma`: current gamma
+- `T`: map precomputed rbf kernel matrix of given gammas
+......` 
+returns probability that outlier sample is classified as outlier
+"""
 function get_logreg_clf(X, y, outlier_index, gamma, T)
     clf = LogisticRegression(random_state=123, tol=0.0095, max_iter=1000000)
 
@@ -159,6 +240,18 @@ function get_logreg_clf(X, y, outlier_index, gamma, T)
     return predict_sk_clf_proba(clf, T[gamma], y, gamma, outlier_index)
 end
 
+"""
+function for predicting probabilities using support vector machines
+...
+# Arguments
+- `X`: feature matrix of input data
+- `y`: target vector of input matrix
+- `outlier_index`: index of current outlier
+- `gamma`: current gamma
+- `T`: not used in SVMs
+......` 
+returns probability that outlier sample is classified as outlier
+"""
 function get_svm_clf(X, y, outlier_index, gamma, T)
     #SVC cannot deal with gamma == 0
     if gamma == 0.0
@@ -169,7 +262,18 @@ function get_svm_clf(X, y, outlier_index, gamma, T)
     return predict_sk_clf_proba(clf, X, y, gamma, outlier_index)
 end
 
-
+"""
+function for predicting probabilities using kernel logistic regression
+...
+# Arguments
+- `X`: feature matrix of input data
+- `y`: target vector of input matrix
+- `outlier_index`: index of current outlier
+- `gamma`: current gamma
+- `T`: map precomputed rbf kernel matrix of given gammas
+......` 
+returns probability that outlier sample is classified as outlier
+"""
 function get_klr_clf(X, y, outlier_index, gamma, T)
     # param set closest to the paper (liblinear returns non-zero values for gamma = 0)
     clf = LogisticRegression(class_weight="balanced", tol=0.0095, solver = "saga", C=100, max_iter=1000000, random_state=123)
@@ -181,6 +285,18 @@ function get_klr_clf(X, y, outlier_index, gamma, T)
     return predict_sk_clf_proba(clf, T[gamma], y, gamma, outlier_index)
 end
 
+"""
+function for predicting probabilities using support vector machines of library libsvm
+...
+# Arguments
+- `X`: feature matrix of input data
+- `y`: target vector of input matrix
+- `outlier_index`: index of current outlier
+- `gamma`: current gamma
+- `T`: not used in SVMs
+......` 
+returns probability that outlier sample is classified as outlier
+"""
 function get_libsvm(X, y, outlier_index, gamma, T)
     clf = svmtrain(X', y, gamma=gamma, probability=true)
     current_sample = reshape(X[outlier_index, :] , (size(X)[2],1))
@@ -188,6 +304,18 @@ function get_libsvm(X, y, outlier_index, gamma, T)
     return svmpredict(clf, current_sample)[2][p_index]
 end
 
+"""
+function for predicting probabilities using liblinear
+...
+# Arguments
+- `X`: feature matrix of input data
+- `y`: target vector of input matrix
+- `outlier_index`: index of current outlier
+- `gamma`: not used for linear predictors
+- `T`: map precomputed rbf kernel matrix of given gammas
+......` 
+returns probability that outlier sample is classified as outlier
+"""
 function get_liblinear(X, y, outlier_index, gamma, T)
     # First dimension of input data is features; second is instances
     model = linear_train(y, X', solver_type=Cint(7), verbose=false);
@@ -203,6 +331,18 @@ function get_liblinear(X, y, outlier_index, gamma, T)
     end
 end
 
+"""
+function for predicting probabilities using native decision trees
+...
+# Arguments
+- `X`: feature matrix of input data
+- `y`: target vector of input matrix
+- `outlier_index`: index of current outlier
+- `gamma`: not used in decision trees
+- `T`: not used in decision trees
+......` 
+returns probability that outlier sample is classified as outlier
+"""
 function get_decision_tree_native(X, y, outlier_index, gamma, T)
     current_sample = reshape(X[outlier_index, :] , (size(X)[2],1))
     n_subfeatures=0
@@ -227,7 +367,18 @@ function get_decision_tree_native(X, y, outlier_index, gamma, T)
     return probs / iteration
 end
 
-
+"""
+function for predicting probabilities using decision trees in sklearn
+...
+# Arguments
+- `X`: feature matrix of input data
+- `y`: target vector of input matrix
+- `outlier_index`: index of current outlier
+- `gamma`: not used for decision trees
+- `T`: not used for decision trees
+......` 
+returns probability that outlier sample is classified as outlier
+"""
 function get_decision_tree_sklearn(X, y, outlier_index, gamma, T)
     model = DecisionTreeClassifier(max_depth=2)
     DecisionTree.fit!(model, X, y)
@@ -240,6 +391,18 @@ function get_decision_tree_sklearn(X, y, outlier_index, gamma, T)
     predict_proba(model, current_sample')[p_index]
 end
 
+"""
+function for predicting probabilities using native random forest
+...
+# Arguments
+- `X`: feature matrix of input data
+- `y`: target vector of input matrix
+- `outlier_index`: index of current outlier
+- `gamma`: not used for random forest
+- `T`: not used for random forest
+......` 
+returns probability that outlier sample is classified as outlier
+"""
 function get_random_forest_native(X, y, outlier_index, gamma, T)
     current_sample = reshape(X[outlier_index, :] , (size(X)[2],1))
     model = build_forest(y, X, -1, 10, 0.7, 2, rng=SEED)
@@ -247,6 +410,18 @@ function get_random_forest_native(X, y, outlier_index, gamma, T)
     return p_outlier
 end
 
+"""
+function for predicting probabilities using random forest in sklearn
+...
+# Arguments
+- `X`: feature matrix of input data
+- `y`: target vector of input matrix
+- `outlier_index`: index of current outlier
+- `gamma`: not used for random forest
+- `T`: not used for random forest
+......` 
+returns probability that outlier sample is classified as outlier
+"""
 function get_random_forest_sklearn(X, y, outlier_index, gamma, T)
     model = RandomForestClassifier(n_subfeatures=-1, n_trees=10, partial_sampling=0.7, max_depth=2, min_samples_leaf=1, min_samples_split=2, min_purity_increase=0.0, rng=SEED)
     DecisionTree.fit!(model, X, y)
@@ -259,6 +434,17 @@ function get_random_forest_sklearn(X, y, outlier_index, gamma, T)
     predict_proba(model, current_sample')[p_index]
 end
 
+"""
+function for evaluating vector of solutions. One solution mvector must consist of size n
+...
+# Arguments
+- `ireos`: vectur of probabilities
+- `solutions`: solution vector or matrix
+- `gamma_min`: used minimum gamma for ireos
+- `gamma_max`: used maximum gamma for ireos
+......` 
+returns probability that outlier sample is classified as outlier
+"""
 function evaluate_solutions(ireos, solutions, gamma_min, gamma_max)
     if isnothing solutions
         return Nothing
@@ -271,6 +457,15 @@ function evaluate_solutions(ireos, solutions, gamma_min, gamma_max)
     return results
 end
 
+"""
+function for regularizing and normalizing/standardizing solutions
+...
+# Arguments
+- `solutions`: dataframe of solutions, solutions[1] represents data, solutions[2] different algorithms
+- `norm_method`: string for normalization of standardization
+......` 
+returns regularized and normalized/standardized data
+"""
 function normalize_solutions!(solutions, norm_method)
     algorithms = solutions[2]
     if norm_method == "normalization"
@@ -283,6 +478,15 @@ function normalize_solutions!(solutions, norm_method)
     end
 end
 
+"""
+function for applying regularization described in 'Interpreting and Unifying Outlier Scores' by Kriegel et. al.
+...
+# Arguments
+- `alg`: algorithm
+- `scores`: data vector
+......` 
+returns regularized and normalized/standardized data
+"""
 function regularize_scores(alg, scores)
     if alg == "lof"
         return reg_base(1.0, scores)
@@ -296,18 +500,25 @@ function regularize_scores(alg, scores)
     end
 end
 
+# baseline regularization
 reg_base(base, data) = broadcast(max, broadcast(-,data, base), 0)
 
+# regularization with minimum
 reg_lin(data) = begin _min = minimum(data); broadcast(-, data, _min) end
 
+# linear inversion
 reg_lin_inverse(data) = begin _max = maximum(data); broadcast(-, _max, data) end
 
+# logarithmic inversion
 reg_log_inverse(data, log_base = MathConstants.e) = begin _max = maximum(data); - broadcast(log, log_base, broadcast(/, data, _max)) end
 
+# normalization
 normalize(data) = StatsBase.transform!(fit(UnitRangeTransform, data), data)
 
+# standardization
 standardize(data) = StatsBase.transform!(fit(ZScoreTransform, data), data)
 
+# evaluation of single solution by given probability vector
 evaluate_solution(ireos, solution, gamma_min, gamma_max) = sum(ireos .* solution) / sum(solution) / (gamma_max - gamma_min)
 
 # radial basis function: K(x, y) = exp(-gamma ||x-y||^2)

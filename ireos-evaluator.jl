@@ -1,3 +1,8 @@
+"""
+Main evaluator class. This class tests all implemented predictors and sampling methods and windows using 80 datasets, writing all 
+intermediate results into different folders.
+"""
+
 include("ireos.jl")
 using Main.Ireos
 
@@ -60,32 +65,42 @@ function run()
     global tol = 0.005
 
     global gamma_max = -1.0
+
+    # TODO implement different scaling methods
     global norm_method = "normalization"
 
     for d in 1:length(names)
         current_dataset_name = names[d]
         result_df = create_empty_result_df()
+        # check if dataset already calculated
         result_file_name = results_dir * current_dataset_name * ".csv"
         if isfile(result_file_name)
             @info "IREOS for Dataset: $current_dataset_name already calculated. Skipping.."
             continue
         end
+        # read dataset
         global data = readdlm(data_dir * current_dataset_name,',', Float64, '\n')
         global solutions = nothing
         #FIXME!!! Scaling!
+        # read solutions
         global solutions = readdlm(scorings_dir * current_dataset_name * ".csv",',', Float64, '\n', header=true)
         #Ireos.normalize_solutions!(solutions, norm_method)
+        #write scaled solutions into different path TODO
         writedlm(scaled_dir * current_dataset_name * ".csv", vcat(solutions[2], solutions[1]), ",")
         for i in 1:ITERATIONS
+            println("\n--------------------------------------------SEQUENTIAL--------------------------------------------\n")
             for clf in clfs
                 for adaptive_quads_enabled_mode in adaptive_quads_modes
                     for window_mode in window_modes
                         ireos_file_name = ireos_dir * current_dataset_name * "-" * clf * "-" * string(window_mode) * "-" * string(adaptive_quads_enabled_mode) * "-sequential.csv"
                         time = @elapsed begin 
+                            # train sequential ireos
                             results, trained = execute_sequential_experiment(data, solutions, clf, gamma_min, tol, isnothing(window_mode) ? 1.0 : window_mode, adaptive_quads_enabled_mode)
                         end
                         println(time)
+                        # push row in aggregated results dataframe
                         push_row!(result_df, current_dataset_name, clf, adaptive_quads_enabled_mode, window_mode, time, results)
+                        # write trained ireos probability vector to file
                         if persist_intermediate_result
                             writedlm(ireos_file_name , trained)
                         end
@@ -95,16 +110,15 @@ function run()
             println("\n--------------------------------------------PARALLEL--------------------------------------------\n")
             for clf in clfs_par
                 ireos_file_name = ireos_dir * current_dataset_name * "-" * clf * "-parallel.csv"
-                if isfile(ireos_file_name)
-                    @debug "Parallel IREOS for Dataset: $current_dataset_name,  $clf already calculated.Skipping.."
-                    continue
-                end
                 gamma_max = calculate_gamma_max(data, clf, true)
                 time = @elapsed begin 
+                    # train parallel irels
                     results, trained = execute_parallel_experiment(data, solutions, clf, gamma_min, gamma_max, tol)
                 end
                 println(time)
-                #push_row!(result_df, current_dataset_name, clf, true, 1.0 , time, results)
+                # push row in aggregated results dataframe
+                push_row!(result_df, current_dataset_name, clf, true, 1.0 , time, results)
+                # write trained ireos probability vector to file
                 if persist_intermediate_result
                     writedlm(ireos_file_name , trained)
                 end
@@ -116,13 +130,16 @@ function run()
     return result_df
 end
 
+# create empty results dataframe with predefined column names for aggregated scores
 create_empty_result_df() = DataFrame(dataset = [], clf = String[], adaptive_quads_enabled = Bool[], window_ratio = Float64[], is_parallel = Bool[], time = Float64[]
 , ireos_sdo = Float64[], ireos_abod = Float64[], ireos_hbos = Float64[], ireos_iforest = Float64[], ireos_knn = Float64[], ireos_lof = Float64[], ireos_ocsvm = Float64[])
 
+# push row with values with fallback
 push_row!(df, current_dataset_name, clf, adaptive_quads_enabled_mode, window_mode, time, results) = push!(df, (current_dataset_name, clf, adaptive_quads_enabled_mode, isnothing(window_mode) ? 1.0 : window_mode, false, time
 , results[1], length(results) > 1 ? results[2] : -1.0, length(results) > 2 ? results[3] : -1.0, length(results) > 3 ? results[4] : -1.0
 , length(results) > 4 ? results[5] : -1.0, length(results) > 5 ? results[6] : -1.0, length(results) > 6 ? results[7] : -1.0))
 
+# calculate gamma_max for given classifier
 function calculate_gamma_max(X, clf, adaptive_quads_enabled)
     if clf in ["liblinear", "decision_tree_native", "decision_tree_sklearn", "random_forest_native", "random_forest_sklearn"]
         return 1.0
@@ -135,6 +152,7 @@ function calculate_gamma_max(X, clf, adaptive_quads_enabled)
     end
 end
 
+# function for executing one calculation of sequential ireos ( calculating parameters -> training ireos -> evaluating solutions)
 function execute_sequential_experiment(data, solutions, clf, gamma_min, tol, window_ratio, adaptive_quads_enabled)
     gamma_max = calculate_gamma_max(data, clf, adaptive_quads_enabled)
     if isnothing(window_ratio)
@@ -150,11 +168,13 @@ function execute_sequential_experiment(data, solutions, clf, gamma_min, tol, win
     return create_result(Ireos.evaluate_solutions, trained, solutions, gamma_min, eval_gamma)
 end
 
+# function for executing one calculation of parallel ireos ( calculating parameters -> training ireos -> evaluating solutions)
 function execute_parallel_experiment(data, solutions, clf, gamma_min, gamma_max, tol)
     trained = IreosPar.ireos_par(data, clf, gamma_min, gamma_max, tol)
     return create_result(IreosPar.evaluate_solutions_par, trained, solutions, gamma_min, gamma_max)
 end
 
+# helper function for nullsave evaluation of solutions 
 create_result(ireos_evaluation_func, trained, solutions, gamma_min, gamma_max) = isnothing(solutions) ? nothing : 
 ireos_evaluation_func(trained, solutions[1]', gamma_min, gamma_max) , trained / (gamma_max - gamma_min)
 
