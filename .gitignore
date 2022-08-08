@@ -24,3 +24,6 @@ docs/site/
 Manifest.toml
 
 data/*
+results/*
+scores/*
+benchmarks/*
