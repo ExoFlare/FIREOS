@@ -1,0 +1,8 @@
+Data,Alg.,adj_Patn,adj_maxf1,adj_ap,auc,AMI
+separated_20,sdo,,0.0,,0,1.0
+separated_20,abod,,,,,
+separated_20,hbos,,,,,
+separated_20,iforest,,,,,
+separated_20,knn,,,,,
+separated_20,lof,,,,,
+separated_20,ocsvm,,,,,
