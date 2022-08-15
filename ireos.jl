@@ -12,11 +12,12 @@ using Distances
 using LIBSVM
 using LIBLINEAR
 using DecisionTree
+using XGBoost
 
 @sk_import linear_model: LogisticRegression
 @sk_import svm: SVC
 
-const VERSION = "0.0.5"
+const VERSION = "0.0.6"
 
 #Inlier and outlier labels
 const INLIER_CLASS = -1
@@ -94,7 +95,7 @@ helper function for calculating the start index in a sliding window
 # Arguments
 - `current_index`: current sample
 - `window_size`: window ratio
-- `size_all`: overall size of teh dataset
+- `size_all`: overall size of the dataset
 ......` 
 returns starting index of sliding window
 """
@@ -194,6 +195,12 @@ function get_classifier_function(clf::String)
         return get_random_forest_native
     elseif clf == "random_forest_sklearn"
         return get_random_forest_sklearn
+    elseif clf == "xgboost_tree"
+        return get_xgboost_tree
+    elseif clf == "xgboost_dart"
+        return get_xgboost_dart
+    elseif clf == "xgboost_linear"
+        return get_xgboost_linear
     else
         @error "Unknown classifier $clf"
     end
@@ -344,7 +351,7 @@ function for predicting probabilities using native decision trees
 returns probability that outlier sample is classified as outlier
 """
 function get_decision_tree_native(X, y, outlier_index, gamma, T)
-    current_sample = reshape(X[outlier_index, :] , (size(X)[2],1))
+    current_sample = reshape(X[outlier_index, :] , (1,size(X)[2]))
     n_subfeatures=0
     #max_depth=2
     min_samples_leaf=1
@@ -357,7 +364,7 @@ function get_decision_tree_native(X, y, outlier_index, gamma, T)
 
     for depth in 1:max_depth
         model = build_tree(y, X, n_subfeatures, depth, min_samples_leaf, min_samples_split, min_purity_increase, rng = SEED)
-        p_outlier = apply_tree_proba(model, current_sample', [OUTLIER_CLASS, INLIER_CLASS])[1]
+        p_outlier = apply_tree_proba(model, current_sample, [OUTLIER_CLASS, INLIER_CLASS])[1]
         probs += p_outlier
         if p_outlier == 1.0
             break
@@ -386,9 +393,9 @@ function get_decision_tree_sklearn(X, y, outlier_index, gamma, T)
     #print_tree(model, 5)
     # apply learned model
     # get the probability of each label
-    current_sample = reshape(X[outlier_index, :] , (size(X)[2],1))
+    current_sample = reshape(X[outlier_index, :] , (1, size(X)[2]))
     p_index = findfirst(isequal(OUTLIER_CLASS), model.classes)
-    predict_proba(model, current_sample')[p_index]
+    predict_proba(model, current_sample)[p_index]
 end
 
 """
@@ -404,9 +411,9 @@ function for predicting probabilities using native random forest
 returns probability that outlier sample is classified as outlier
 """
 function get_random_forest_native(X, y, outlier_index, gamma, T)
-    current_sample = reshape(X[outlier_index, :] , (size(X)[2],1))
-    model = build_forest(y, X, -1, 10, 0.7, 2, rng=SEED)
-    p_outlier = apply_forest_proba(model, current_sample', [OUTLIER_CLASS, INLIER_CLASS])[1]
+    current_sample = reshape(X[outlier_index, :] , (1,size(X)[2]))
+    model = build_forest(y, X, rng=SEED)
+    p_outlier = apply_forest_proba(model, current_sample, [OUTLIER_CLASS, INLIER_CLASS])[1]
     return p_outlier
 end
 
@@ -429,9 +436,87 @@ function get_random_forest_sklearn(X, y, outlier_index, gamma, T)
     #print_tree(model, 5)
     # apply learned model
     # get the probability of each label
-    current_sample = reshape(X[outlier_index, :] , (size(X)[2],1))
+    current_sample = reshape(X[outlier_index, :] , (1,size(X)[2]))
     p_index = findfirst(isequal(OUTLIER_CLASS), model.classes)
-    predict_proba(model, current_sample')[p_index]
+    predict_proba(model, current_sample)[p_index]
+end
+
+"""
+function for predicting probabilities using native XGBoost with tree booster
+...
+# Arguments
+- `X`: feature matrix of input data
+- `y`: target vector of input matrix
+- `outlier_index`: index of current outlier
+- `gamma`: not used for xgboost
+- `T`: not used for xgboost
+......` 
+returns probability that outlier sample is classified as outlier
+"""
+function get_xgboost_tree(X, y, outlier_index, gamma, T)
+    # xgboost cannot deal with values outsode [0,1) -> tempoarily transform negative labels
+    replace!(y, INLIER_CLASS => 0)
+    # num rounds act as number of estimators in rf
+    num_rounds = 1
+    # Important! xgboost uses Matrix of size (1,k) for getting one probability output, which is correct
+    # A Matrix of (k, 1) on the other hand does NOT result in an error! The output is 9 probabilities for one sample, which is NOT correct!
+    current_sample = reshape(X[outlier_index, :] , (1,size(X)[2]))
+    # softprob transforms result into probability for multiclass classification
+    # based on same principle as logistic regression -> is a generalization
+    # https://stackoverflow.com/questions/36051506/difference-between-logistic-regression-and-softmax-regression
+    # model = xgboost(X, num_rounds, label=y, max_depth=2, seed=SEED, objective="multi:softprob", num_class=2, silent=1, validate_parameters=true)
+    # print(XGBoost.predict(model, current_sample))
+    # equals reg:logistic
+    # random forest parameter setting https://xgboost.readthedocs.io/en/stable/tutorials/rf.html
+    model = xgboost(X, num_rounds, label=y, max_depth=2, seed=SEED, objective="binary:logistic", silent=true, eta = 1, subsample=0.8, num_parallel_tree=10, num_boost_round=3)
+    # For binary classification, the output predictions are probability confidence scores in [0,1], corresponds to the probability of the label to be positive.
+    # Outlier prediction acts as success event a binomial trial scenario
+    return XGBoost.predict(model, current_sample)[1]
+end
+
+"""
+function for predicting probabilities using native XGBoost with dart booster
+https://xgboost.readthedocs.io/en/latest/tutorials/dart.html
+...
+# Arguments
+- `X`: feature matrix of input data
+- `y`: target vector of input matrix
+- `outlier_index`: index of current outlier
+- `gamma`: not used for xgboost
+- `T`: not used for xgboost
+......` 
+returns probability that outlier sample is classified as outlier
+"""
+function get_xgboost_dart(X, y, outlier_index, gamma, T)
+    # xgboost cannot deal with values outsode [0,1) -> tempoarily transform negative labels
+    replace!(y, INLIER_CLASS => 0)
+    # num rounds act as number of estimators in rf
+    num_rounds = 10
+    current_sample = reshape(X[outlier_index, :] , (1,size(X)[2]))
+    model = xgboost(X, num_rounds, label=y, booster="dart", max_depth=2, seed=SEED, objective="binary:logistic", silent=1)
+    return XGBoost.predict(model, current_sample)[1]
+end
+
+"""
+function for predicting probabilities using native XGBoost with linear booster
+...
+# Arguments
+- `X`: feature matrix of input data
+- `y`: target vector of input matrix
+- `outlier_index`: index of current outlier
+- `gamma`: not used for xgboost
+- `T`: not used for xgboost
+......` 
+returns probability that outlier sample is classified as outlier
+"""
+function get_xgboost_linear(X, y, outlier_index, gamma, T)
+    # xgboost cannot deal with values outsode [0,1) -> tempoarily transform negative labels
+    replace!(y, INLIER_CLASS => 0)
+    # num rounds act as number of estimators in rf
+    num_rounds = 10
+    current_sample = reshape(X[outlier_index, :] , (1,size(X)[2]))
+    model = xgboost(X, num_rounds, label=y, booster="gblinear", max_depth=2, seed=SEED, objective="binary:logistic", silent=1)
+    return XGBoost.predict(model, current_sample)[1]
 end
 
 """
@@ -446,8 +531,8 @@ function for evaluating vector of solutions. One solution mvector must consist o
 returns probability that outlier sample is classified as outlier
 """
 function evaluate_solutions(ireos, solutions, gamma_min, gamma_max)
-    if isnothing solutions
-        return Nothing
+    if isnothing(solutions)
+        return nothing
     end
     @info "Started IREOS Evaluation:"
     results = Dict{Int, Float64}()
@@ -499,6 +584,8 @@ function regularize_scores(alg, scores)
         return reg_lin(scores)
     end
 end
+
+calculate_class_weights(array) = begin class_map = sort(countmap(array)); length(array) ./ (length(class_map) .* values(class_map)) end
 
 # baseline regularization
 reg_base(base, data) = broadcast(max, broadcast(-,data, base), 0)
