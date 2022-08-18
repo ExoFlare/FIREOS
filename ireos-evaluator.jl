@@ -49,7 +49,7 @@ function run()
     "low-noise_17", "low-noise_18", "low-noise_19", "low-noise_20", "separated_20"]
 
     #global names = ["my_test"]
-    global names = ["complex_11"]
+    #global names = ["complex_11"]
 
     clfs = ["decision_tree_native", "decision_tree_sklearn", "random_forest_native", "random_forest_sklearn", "liblinear", "xgboost_tree", "xgboost_dart", "xgboost_linear"]
     clfs_par = ["libsvm"]
@@ -90,10 +90,14 @@ function run()
             @info "Scaled scorings for Dataset: $current_dataset_name already calculated. Reading scaled scores directly from file.."
             solutions = readdlm(scaled_dir * current_dataset_name * ".csv",',', Float64, '\n', header=true)
         else
-            @info "Scaled scorings for Dataset: $current_dataset_name missing. Scaling scores.."
-            solutions = readdlm(scorings_dir * current_dataset_name * ".csv",',', Float64, '\n', header=true)
-            Ireos.normalize_solutions!(solutions, norm_method)
-            writedlm(scaled_dir * current_dataset_name * ".csv", vcat(solutions[2], solutions[1]), ",")
+            if isfile(scorings_dir * current_dataset_name * ".csv")
+                @info "Scaled scorings for Dataset: $current_dataset_name missing. Scaling scores.."
+                solutions = readdlm(scorings_dir * current_dataset_name * ".csv",',', Float64, '\n', header=true)
+                Ireos.normalize_solutions!(solutions, norm_method)
+                writedlm(scaled_dir * current_dataset_name * ".csv", vcat(solutions[2], solutions[1]), ",")
+            else
+                @warn "Scaled scorings for Dataset: $current_dataset_name failed. No scores found."
+            end
         end
 
         for i in 1:ITERATIONS
@@ -108,7 +112,11 @@ function run()
                         end
                         println(time)
                         # push row in aggregated results dataframe
-                        push_row!(result_df, current_dataset_name, clf, adaptive_quads_enabled_mode, window_mode, time, results)
+                        if !isnothing(results)
+                            push_row!(result_df, current_dataset_name, clf, adaptive_quads_enabled_mode, window_mode, false, time, results)
+                        else 
+                            @warn "Sequential results for Dataset: $current_dataset_name is nothing!"
+                        end
                         # write trained ireos probability vector to file
                         if persist_intermediate_result
                             writedlm(ireos_file_name , trained)
@@ -126,7 +134,11 @@ function run()
                 end
                 println(time)
                 # push row in aggregated results dataframe
-                push_row!(result_df, current_dataset_name, clf, true, 1.0 , time, results)
+                if !isnothing(results)
+                    push_row!(result_df, current_dataset_name, clf, true, 1.0 , true, time, results)
+                else
+                    @warn "Parallel results for Dataset: $current_dataset_name is nothing!"
+                end
                 # write trained ireos probability vector to file
                 if persist_intermediate_result
                     writedlm(ireos_file_name , trained)
@@ -136,7 +148,6 @@ function run()
         #Uncomment for saving evaluated solutions
         CSV.write(result_file_name, result_df)
     end
-    return result_df
 end
 
 # create empty results dataframe with predefined column names for aggregated scores
@@ -144,9 +155,11 @@ create_empty_result_df() = DataFrame(dataset = [], clf = String[], adaptive_quad
 , ireos_sdo = Float64[], ireos_abod = Float64[], ireos_hbos = Float64[], ireos_iforest = Float64[], ireos_knn = Float64[], ireos_lof = Float64[], ireos_ocsvm = Float64[])
 
 # push row with values with fallback
-push_row!(df, current_dataset_name, clf, adaptive_quads_enabled_mode, window_mode, time, results) = push!(df, (current_dataset_name, clf, adaptive_quads_enabled_mode, isnothing(window_mode) ? 1.0 : window_mode, false, time
-, results[1], length(results) > 1 ? results[2] : -1.0, length(results) > 2 ? results[3] : -1.0, length(results) > 3 ? results[4] : -1.0
-, length(results) > 4 ? results[5] : -1.0, length(results) > 5 ? results[6] : -1.0, length(results) > 6 ? results[7] : -1.0))
+push_row!(df, current_dataset_name, clf, adaptive_quads_enabled_mode, window_mode, is_parallel, time, results) = push!(df, (current_dataset_name, clf, adaptive_quads_enabled_mode, isnothing(window_mode) ? 1.0 : window_mode, is_parallel, time
+, !isnothing(results[1]) ? results[1] : -1.0, length(results) > 1 && !isnothing(results[2]) ? results[2] : -1.0
+, length(results) > 2 && !isnothing(results[3]) ? results[3] : -1.0, length(results) > 3 && !isnothing(results[4]) ? results[4] : -1.0
+, length(results) > 4 && !isnothing(results[5]) ? results[5] : -1.0, length(results) > 5 && !isnothing(results[6]) ? results[6] : -1.0
+, length(results) > 6 && !isnothing(results[7]) ? results[7] : -1.0))
 
 # calculate gamma_max for given classifier
 function calculate_gamma_max(X, clf, adaptive_quads_enabled)
