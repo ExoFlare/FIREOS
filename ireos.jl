@@ -7,6 +7,7 @@ module Ireos
 using StatsBase
 using Base.Threads
 using Distributed
+using Random
 using ScikitLearn
 using Distances
 using LIBSVM
@@ -28,6 +29,7 @@ const MAX_RECURSION_DEPTH = 3
 
 #fixed seed for experiments being reproducable
 const SEED = 123
+Random.seed!(SEED)
 
 """
 main ireos function
@@ -219,7 +221,7 @@ function for predicting probabilities of sklearn predictors
 returns probability that outlier sample is classified as outlier
 """
 function predict_sk_clf_proba(clf, X, y, gamma, outlier_index)
-    fit!(clf, X, y)
+    ScikitLearn.fit!(clf, X, y)
     current_sample = reshape(X[outlier_index, :] , (size(X)[2],1))
     p_index = findfirst(isequal(OUTLIER_CLASS), clf.classes_)
     return predict_proba(clf, current_sample')[p_index]
@@ -238,7 +240,7 @@ function for predicting probabilities using logistic regression
 returns probability that outlier sample is classified as outlier
 """
 function get_logreg_clf(X, y, outlier_index, gamma, T)
-    clf = LogisticRegression(random_state=123, tol=0.0095, max_iter=1000000)
+    clf = LogisticRegression(random_state=SEED, tol=0.0095, max_iter=1000000)
 
     if !haskey(T, gamma)
         @debug "Gamma: $gamma missing.. Calculating R-Matrix"
@@ -265,7 +267,7 @@ function get_svm_clf(X, y, outlier_index, gamma, T)
         gamma = 0.0001
     end
     @debug "Thread", threadid(), "Gamma: $gamma, X: ", size(X), "y: ", size(y), "Outlier-Index:", findfirst(isequal(OUTLIER_CLASS), y)
-    clf = SVC(gamma=gamma, class_weight="balanced", probability=true, C=100, random_state=123, tol=0.0095, max_iter=-1)
+    clf = SVC(gamma=gamma, class_weight="balanced", probability=true, C=100, random_state=SEED, tol=0.0095, max_iter=-1)
     return predict_sk_clf_proba(clf, X, y, gamma, outlier_index)
 end
 
@@ -283,7 +285,7 @@ returns probability that outlier sample is classified as outlier
 """
 function get_klr_clf(X, y, outlier_index, gamma, T)
     # param set closest to the paper (liblinear returns non-zero values for gamma = 0)
-    clf = LogisticRegression(class_weight="balanced", tol=0.0095, solver = "saga", C=100, max_iter=1000000, random_state=123)
+    clf = LogisticRegression(class_weight="balanced", tol=0.0095, solver = "saga", C=100, max_iter=1000000, random_state=SEED)
     if !haskey(T, gamma)
         @debug "Gamma: $gamma missing.. Calculating R-Matrix"
         T[gamma] = rbf_kernel(X, gamma)
