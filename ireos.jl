@@ -4,15 +4,15 @@ Main implementation of sequential IREOS
 
 module Ireos
 
-using StatsBase
 using Base.Threads
+using DecisionTree
+using Distances
 using Distributed
+using LIBLINEAR
+using LIBSVM
 using Random
 using ScikitLearn
-using Distances
-using LIBSVM
-using LIBLINEAR
-using DecisionTree
+using StatsBase
 using XGBoost
 
 @sk_import linear_model: LogisticRegression
@@ -29,7 +29,7 @@ const MAX_RECURSION_DEPTH = 3
 
 #fixed seed for experiments being reproducable
 const SEED = 123
-Random.seed!(SEED)
+#Random.seed!(SEED)
 
 """
 main ireos function
@@ -46,13 +46,18 @@ main ireos function
 returns aucs::Vector{Float64}: numerical vector of separabilities having size n
 """
 function ireos(X::AbstractMatrix{<:Number}, clf::String, gamma_min::Float64, gamma_max::Float64, tol::Float64, window_size::Union{Int32, Nothing}=nothing, adaptive_quads_enabled::Bool=true)
-    window_mode = false
+    Random.seed!(SEED)
     num_samples = size(X)[1]
-    aucs = Vector{Float64}(undef,num_samples)
+    @assert num_samples == size(X)[1]
+    window_mode = false
     if !isnothing(window_size)
         @assert window_size <= num_samples
-        window_mode = true
+        # apply sliding window only when !=
+        if num_samples < window_size
+            window_mode = true
+        end
     end
+    aucs = Vector{Float64}(undef,num_samples)
     @info "Started IREOS with dataset of size:", size(X), "window size: $window_size, gamma_min: $gamma_min, gamma_max: $gamma_max, tol: $tol, classifier: $clf, max_recursion_depth: $MAX_RECURSION_DEPTH, adaptive_quads_enabled: $adaptive_quads_enabled"
     clf_func = get_classifier_function(clf)
     if window_mode
@@ -517,7 +522,7 @@ function get_xgboost_linear(X, y, outlier_index, gamma, T)
     # num rounds act as number of estimators in rf
     num_rounds = 10
     current_sample = reshape(X[outlier_index, :] , (1,size(X)[2]))
-    model = xgboost(X, num_rounds, label=y, booster="gblinear", max_depth=2, seed=SEED, objective="binary:logistic", silent=1)
+    model = xgboost(X, num_rounds, label=y, booster="gblinear", max_depth=2, seed=SEED, objective="binary:logistic", silent=1, nthread=1)
     return XGBoost.predict(model, current_sample)[1]
 end
 
