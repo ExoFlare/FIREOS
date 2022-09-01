@@ -25,14 +25,13 @@ const GAMMA_MIN = 0.0
 function test_seq_and_par_equals()
     X = rand(50,5)
     solutions = rand(50, 2)
-    window_size::Int32 = 50
     # libsvm and liblinear do not feature fixed seeds
     clfs = Vector{String}(["svc", "logreg", "klr", "decision_tree_native", "decision_tree_sklearn", "random_forest_native", "random_forest_sklearn", "xgboost_tree", "xgboost_dart", "xgboost_linear"])
     for clf in clfs
-        trained_seq = Ireos.ireos(X, clf, GAMMA_MIN, GAMMA_MAX, TOLERANCE, window_size)
+        trained_seq = Ireos.fireos(X, clf)
         result_seq = Ireos.evaluate_solutions(trained_seq, solutions', GAMMA_MIN, GAMMA_MAX)
-        trained_par = IreosPar.ireos_par(X, clf, GAMMA_MIN, GAMMA_MAX, TOLERANCE, window_size)
-        result_par = IreosPar.evaluate_solutions_par(trained_par, solutions', GAMMA_MIN, GAMMA_MAX)
+        trained_par = IreosPar.fireos(X, clf)
+        result_par = IreosPar.evaluate_solutions(trained_par, solutions', GAMMA_MIN, GAMMA_MAX)
         @test result_seq == result_par
     end
 end
@@ -40,19 +39,18 @@ end
 function test_fixed_seed()
     X = rand(50,5)
     solutions = rand(50, 2)
-    window_size::Int32 = 50
     # libsvm and liblinear do not feature fixed seeds
     clfs = Vector{String}(["svc", "logreg", "klr", "decision_tree_native", "decision_tree_sklearn", "random_forest_native", "random_forest_sklearn", "xgboost_tree", "xgboost_dart", "xgboost_linear"])
     for clf in clfs
-        trained_seq1 = Ireos.ireos(X, clf, GAMMA_MIN, GAMMA_MAX, TOLERANCE, window_size)
+        trained_seq1 = Ireos.fireos(X, clf)
         result_seq1 = Ireos.evaluate_solutions(trained_seq1, solutions', GAMMA_MIN, GAMMA_MAX)
-        trained_seq2 = Ireos.ireos(X, clf, GAMMA_MIN, GAMMA_MAX, TOLERANCE, window_size)
+        trained_seq2 = Ireos.fireos(X, clf)
         result_seq2 = Ireos.evaluate_solutions(trained_seq2, solutions', GAMMA_MIN, GAMMA_MAX)
 
-        trained_par1 = IreosPar.ireos_par(X, clf, GAMMA_MIN, GAMMA_MAX, TOLERANCE, window_size)
-        result_par1 = IreosPar.evaluate_solutions_par(trained_par1, solutions', GAMMA_MIN, GAMMA_MAX)
-        trained_par2 = IreosPar.ireos_par(X, clf, GAMMA_MIN, GAMMA_MAX, TOLERANCE, window_size)
-        result_par2 = IreosPar.evaluate_solutions_par(trained_par2, solutions', GAMMA_MIN, GAMMA_MAX)
+        trained_par1 = IreosPar.fireos(X, clf)
+        result_par1 = IreosPar.evaluate_solutions(trained_par1, solutions', GAMMA_MIN, GAMMA_MAX)
+        trained_par2 = IreosPar.fireos(X, clf)
+        result_par2 = IreosPar.evaluate_solutions(trained_par2, solutions', GAMMA_MIN, GAMMA_MAX)
         @test result_seq1 == result_seq2
         @test result_par1 == result_par2
     end

@@ -4,6 +4,8 @@ Main implementation of sequential IREOS
 
 module Ireos
 
+include("fireos_common.jl")
+
 using Base.Threads
 using DecisionTree
 using Distances
@@ -18,7 +20,7 @@ using XGBoost
 @sk_import linear_model: LogisticRegression
 @sk_import svm: SVC
 
-const VERSION = "0.0.6"
+const VERSION = "0.0.7"
 
 #Inlier and outlier labels
 const INLIER_CLASS = -1
@@ -31,6 +33,34 @@ const MAX_RECURSION_DEPTH = 3
 const SEED = 123
 #Random.seed!(SEED)
 
+function fireos(X, clf; kwargs...)
+    if haskey(kwargs, :gamma_min)
+        gamma_min = kwargs[:gamma_min]
+    else
+        gamma_min = 0.0
+    end
+    if haskey(kwargs, :gamma_max)
+        gamma_max = kwargs[:gamma_max]
+    else
+        gamma_max = get_default_gamma_max_for_clf(clf, X)
+    end
+    if haskey(kwargs, :adaptive_quads_enabled)
+        adaptive_quads_enabled = kwargs[:adaptive_quads_enabled]
+    else
+        adaptive_quads_enabled = get_default_adaptive_quads_enabled_for_clf(clf)
+    end
+    if haskey(kwargs, :tol)
+        tol = kwargs[:tol]
+    else
+        tol = 0.005
+    end
+    if haskey(kwargs, :window_size)
+        window_size = kwargs[:window_size]
+    else
+        window_size = size(X)[1]
+    end
+    fireos(X, clf, gamma_min, gamma_max, tol, window_size, adaptive_quads_enabled)
+end
 """
 main ireos function
 ...
@@ -40,23 +70,16 @@ main ireos function
 - `gamma_min::Float64`: minimum gamma for models using gamma hyperparameter
 - `gamma_max::Float64`: maximum gamma for models using gamma hyperparameter
 - `tol::Float64`: epsilon: termination condition for adaptive quadrature
-- `window_size::Union{Int32, Nothing}`: window ratio or nothing for no window
+- `window_size::Integer`: size of the sliding window -> n if no window
 - `adaptive_quads_enabled::Bool`: true if adaptive quadrature calculation enabled else false
 ......` 
 returns aucs::Vector{Float64}: numerical vector of separabilities having size n
 """
-function ireos(X::AbstractMatrix{<:Number}, clf::String, gamma_min::Float64, gamma_max::Float64, tol::Float64, window_size::Union{Int32, Nothing}=nothing, adaptive_quads_enabled::Bool=true)
-    Random.seed!(SEED)
+function fireos(X::AbstractMatrix{<:Number}, clf::String, gamma_min::Float64, gamma_max::Float64, tol::Float64, window_size::Integer, adaptive_quads_enabled::Bool)
     num_samples = size(X)[1]
     @assert num_samples == size(X)[1]
-    window_mode = false
-    if !isnothing(window_size)
-        @assert window_size <= num_samples
-        # apply sliding window only when !=
-        if num_samples < window_size
-            window_mode = true
-        end
-    end
+    window_mode = use_window_mode(window_size, num_samples)
+
     aucs = Vector{Float64}(undef,num_samples)
     @info "Started IREOS with dataset of size:", size(X), "window size: $window_size, gamma_min: $gamma_min, gamma_max: $gamma_max, tol: $tol, classifier: $clf, max_recursion_depth: $MAX_RECURSION_DEPTH, adaptive_quads_enabled: $adaptive_quads_enabled"
     clf_func = get_classifier_function(clf)
@@ -94,26 +117,6 @@ function ireos(X::AbstractMatrix{<:Number}, clf::String, gamma_min::Float64, gam
         end
     end
     return aucs
-end
-
-"""
-helper function for calculating the start index in a sliding window
-...
-# Arguments
-- `current_index`: current sample
-- `window_size`: window ratio
-- `size_all`: overall size of the dataset
-......` 
-returns starting index of sliding window
-"""
-function get_start_idx(current_index, window_size, size_all)
-    if current_index <= window_size
-        return 1
-    elseif current_index > size_all - window_size
-        return size_all - (window_size - 1)
-    else
-        return current_index - (window_size - 1)
-    end
 end
 
 """
@@ -175,43 +178,7 @@ function simpson_rule(X, y, outlier_index, a, b, clf_func, seperabilities, T)
     return (h / 3) * (seperabilities[a] + 4 * seperabilities[a + h] + seperabilities[b])
 end
 
-"""
-function for getting the correnponsing classifier function by given string
-...
-# Arguments
-- `clf`: predictor string
-......` 
-returns classifier function
-"""
-function get_classifier_function(clf::String)
-    if clf == "svc"
-        return get_svm_clf
-    elseif clf == "logreg"
-        return get_logreg_clf
-    elseif clf == "klr"
-        return get_klr_clf
-    elseif clf == "libsvm"
-        return get_libsvm
-    elseif clf == "liblinear"
-        return get_liblinear
-    elseif clf == "decision_tree_native"
-        return get_decision_tree_native
-    elseif clf == "decision_tree_sklearn"
-        return get_decision_tree_sklearn
-    elseif clf == "random_forest_native"
-        return get_random_forest_native
-    elseif clf == "random_forest_sklearn"
-        return get_random_forest_sklearn
-    elseif clf == "xgboost_tree"
-        return get_xgboost_tree
-    elseif clf == "xgboost_dart"
-        return get_xgboost_dart
-    elseif clf == "xgboost_linear"
-        return get_xgboost_linear
-    else
-        @error "Unknown classifier $clf"
-    end
-end
+
 
 """
 function for predicting probabilities of sklearn predictors
@@ -522,6 +489,7 @@ function get_xgboost_linear(X, y, outlier_index, gamma, T)
     # num rounds act as number of estimators in rf
     num_rounds = 10
     current_sample = reshape(X[outlier_index, :] , (1,size(X)[2]))
+    #nthreads = 1 because otherwise seed is not considered
     model = xgboost(X, num_rounds, label=y, booster="gblinear", max_depth=2, seed=SEED, objective="binary:logistic", silent=1, nthread=1)
     return XGBoost.predict(model, current_sample)[1]
 end
@@ -569,54 +537,6 @@ function normalize_solutions!(solutions, norm_method)
         solutions[1]'[i,:] = func(regularize_scores(algorithms[i], solutions[1]'[i,:]))
     end
 end
-
-"""
-function for applying regularization described in 'Interpreting and Unifying Outlier Scores' by Kriegel et. al.
-...
-# Arguments
-- `alg`: algorithm
-- `scores`: data vector
-......` 
-returns regularized and normalized/standardized data
-"""
-function regularize_scores(alg, scores)
-    if alg == "lof"
-        return reg_base(1.0, scores)
-    elseif alg == "ldof"
-        return reg_base(0.5, scores)
-    elseif alg == "abod"
-        return reg_log_inverse(scores)
-    # The higher, the more abnormal. Outliers tend to have higher scores. This value is available once the detector is fitted.
-    elseif alg == "iforest" || alg == "ocsvm" || alg == "sdo" || alg == "hbos" || alg == "knn"
-        return reg_lin(scores)
-    end
-end
-
-calculate_class_weights(array) = begin class_map = sort(countmap(array)); length(array) ./ (length(class_map) .* values(class_map)) end
-
-# baseline regularization
-reg_base(base, data) = broadcast(max, broadcast(-,data, base), 0)
-
-# regularization with minimum
-reg_lin(data) = begin _min = minimum(data); broadcast(-, data, _min) end
-
-# linear inversion
-reg_lin_inverse(data) = begin _max = maximum(data); broadcast(-, _max, data) end
-
-# logarithmic inversion
-reg_log_inverse(data, log_base = MathConstants.e) = begin _max = maximum(data); - broadcast(log, log_base, broadcast(/, data, _max)) end
-
-# normalization
-normalize(data) = StatsBase.transform!(fit(UnitRangeTransform, data), data)
-
-# standardization
-standardize(data) = StatsBase.transform!(fit(ZScoreTransform, data), data)
-
-# evaluation of single solution by given probability vector
-evaluate_solution(ireos, solution, gamma_min, gamma_max) = sum(ireos .* solution) / sum(solution) / (gamma_max - gamma_min)
-
-# radial basis function: K(x, y) = exp(-gamma ||x-y||^2)
-rbf_kernel(X, gamma) = exp.(-gamma * pairwise(SqEuclidean(), X, dims=1))
 
 println("Package Ireos loaded")
 

@@ -24,14 +24,10 @@ function parse_commandline()
             required = true
             nargs = '+'
         "--clf", "-c"
-            help = "classifier(s) calling sequential (main) fireos interface\nFeatured classifiers:\n Decision Trees: <decision_tree_native> <decision_tree_sklearn>\nRandom Forests: <random_forest_native> <random_forest_sklearn>\n<liblinear>\nXGBoost: <xgboost_tree> <xgboost_dart> <xgboost_linear>"
+            help = "classifier(s) calling (main) fireos interface\nFeatured classifiers:\nSupport Vector Machines: <svc> <logreg> <klr> <libsvm>\n Decision Trees: <decision_tree_native> <decision_tree_sklearn>\nRandom Forests: <random_forest_native> <random_forest_sklearn>\n<liblinear>\nXGBoost: <xgboost_tree> <xgboost_dart> <xgboost_linear>"
             arg_type = String
             required = true
             nargs = '+'
-        "--clf-par", "-p"
-            help = "classifier(s) calling parallel fireos interface\nFeatures classifiers:\nSupport Vector Machines: <svc> <libsvm>\nLogistic Regression: <logreg> <klr>"
-            arg_type = String
-            nargs = '*'
         "--solution", "-s"
             help = "scoring(s) file(s)"
             arg_type = String
@@ -63,6 +59,9 @@ function parse_commandline()
         "--show-debug-logs"
             help = "enable debug messages"
             action = :store_true
+        "--use-parallel", "-p"
+            help = "Using mulitthreaded fireos interface"
+            action = :store_true
     end
 
     return parse_args(s)
@@ -89,12 +88,12 @@ function run()
     global evaluated_suffix = "_evaluated"
     global scaled_suffix = "_scaled"
 
-    # main and mandatory parameters
+    # main fireos parameters
     global names = parsed_args["data"]
     global clfs = parsed_args["clf"]
-    global clfs_par = parsed_args["clf-par"]
     global solution_names = parsed_args["solution"]
     global scaling_method = parsed_args["scaling-method"]
+    global use_parallel = parsed_args["use-parallel"]
 
     # additional ireos parameters and settings
     global gamma_max = parsed_args["gamma-max"]
@@ -146,29 +145,24 @@ function run()
         end
 
         for clf in clfs
-            ireos_file_name = current_dataset_name * "-" * clf * trained_suffix * "-sequential.csv"
-            time = @elapsed begin 
-                # train sequential ireos
-                results, trained = execute_sequential_experiment(data, solutions, clf, gamma_min, tol, isnothing(window_ratio) ? 1.0 : window_ratio, adaptive_quads_enabled)
+            if !use_parallel
+                ireos_file_name = current_dataset_name * "-" * clf * trained_suffix * "-sequential.csv"
+                time = @elapsed begin 
+                    # train sequential ireos
+                    results, trained = execute_sequential_experiment(data, solutions, clf, gamma_min, tol, isnothing(window_ratio) ? 1.0 : window_ratio, adaptive_quads_enabled)
+                end
+                # push row in aggregated results dataframe
+                push_row!(result_df, current_dataset_name, clf, adaptive_quads_enabled, window_ratio, false, time, results)
+            else
+                ireos_file_name = current_dataset_name * "-" * clf * trained_suffix * "-parallel.csv"
+                gamma_max = calculate_gamma_max(data, clf, true)
+                time = @elapsed begin 
+                    # train parallel irels
+                    results, trained = execute_parallel_experiment(data, solutions, clf, gamma_min, gamma_max, tol)
+                end
+                # push row in aggregated results dataframe
+                push_row!(result_df, current_dataset_name, clf, adaptive_quads_enabled, window_ratio, true, time, results)
             end
-            # push row in aggregated results dataframe
-            push_row!(result_df, current_dataset_name, clf, adaptive_quads_enabled, window_ratio, false, time, results)
-
-            # write trained ireos probability vector to file
-            if persist_trained_ireos
-                writedlm(ireos_file_name , trained)
-            end
-        end
-        for clf in clfs_par
-            ireos_file_name = current_dataset_name * "-" * clf * trained_suffix * "-parallel.csv"
-            gamma_max = calculate_gamma_max(data, clf, true)
-            time = @elapsed begin 
-                # train parallel irels
-                results, trained = execute_parallel_experiment(data, solutions, clf, gamma_min, gamma_max, tol)
-            end
-            # push row in aggregated results dataframe
-            push_row!(result_df, current_dataset_name, clf, true, 1.0 , true, time, results)
-
             # write trained ireos probability vector to file
             if persist_trained_ireos
                 writedlm(ireos_file_name , trained)
@@ -212,7 +206,7 @@ function execute_sequential_experiment(data, solutions, clf, gamma_min, tol, win
     else
         window_size = round(Int32, window_ratio * size(data)[1])
     end
-    trained = Ireos.ireos(data, clf, gamma_min, gamma_max, tol, window_size, adaptive_quads_enabled)
+    trained = Ireos.fireos(data, clf, gamma_min, gamma_max, tol, window_size, adaptive_quads_enabled)
     eval_gamma = gamma_max
     if !adaptive_quads_enabled
         eval_gamma = 1.0
@@ -222,8 +216,8 @@ end
 
 # function for executing one calculation of parallel ireos ( calculating parameters -> training ireos -> evaluating solutions)
 function execute_parallel_experiment(data, solutions, clf, gamma_min, gamma_max, tol)
-    trained = IreosPar.ireos_par(data, clf, gamma_min, gamma_max, tol)
-    return create_result(IreosPar.evaluate_solutions_par, trained, solutions, gamma_min, gamma_max)
+    trained = IreosPar.fireos(data, clf, gamma_min, gamma_max, tol)
+    return create_result(IreosPar.evaluate_solutions, trained, solutions, gamma_min, gamma_max)
 end
 
 # helper function for nullsave evaluation of solutions 
