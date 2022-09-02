@@ -1,30 +1,6 @@
-module IreosPar
-
-include("fireos_common.jl")
-
-using Base.Threads
-using DecisionTree
-using Distances
-using Distributed
-using LIBLINEAR
-using LIBSVM
-using Random
-using ScikitLearn
-using ThreadSafeDicts
-using XGBoost
-
-@sk_import linear_model: LogisticRegression
-@sk_import svm: SVC
-
-const VERSION = "0.0.5"
-const INLIER_CLASS = -1
-const OUTLIER_CLASS = 1
-const MAX_RECURSION_DEPTH = 3
-
-const l = ReentrantLock()
-
-const SEED = 123
-Random.seed!(SEED)
+"""
+Main implementation of sequential IREOS
+"""
 
 function fireos(X, clf; kwargs...)
     if haskey(kwargs, :gamma_min)
@@ -52,11 +28,10 @@ function fireos(X, clf; kwargs...)
     else
         window_size = size(X)[1]
     end
-    fireos(X, clf, gamma_min, gamma_max, tol, window_size, adaptive_quads_enabled)
+    _fireos(X, clf, gamma_min, gamma_max, tol, window_size, adaptive_quads_enabled)
 end
-
 """
-main multithreaded fireos function
+main ireos function
 ...
 # Arguments
 - `X::AbstractMatrix{<:Number}`: numerical input matrix of data having size (n x m)
@@ -69,20 +44,23 @@ main multithreaded fireos function
 ......` 
 returns aucs::Vector{Float64}: numerical vector of separabilities having size n
 """
-function fireos(X::AbstractMatrix{<:Number}, clf::String, gamma_min::Float64, gamma_max::Float64, tol::Float64, window_size::Integer, adaptive_quads_enabled::Bool)
+function _fireos(X::AbstractMatrix{<:Number}, clf::String, gamma_min::Float64, gamma_max::Float64, tol::Float64, window_size::Integer, adaptive_quads_enabled::Bool)
     num_samples = size(X)[1]
     @assert num_samples == size(X)[1]
     window_mode = use_window_mode(window_size, num_samples)
 
-    aucs = Vector{Float64}(undef, num_samples)
-    @info "Started Parallel IREOS with dataset of size:", size(X), "window size: $window_size, gamma_min: $gamma_min, gamma_max: $gamma_max, tol: $tol, classifier: $clf, max_recursion_depth: $MAX_RECURSION_DEPTH, adaptive_quads_enabled: $adaptive_quads_enabled"
+    aucs = Vector{Float64}(undef,num_samples)
+    @info "Started IREOS with dataset of size:", size(X), "window size: $window_size, gamma_min: $gamma_min, gamma_max: $gamma_max, tol: $tol, classifier: $clf, max_recursion_depth: $MAX_RECURSION_DEPTH, adaptive_quads_enabled: $adaptive_quads_enabled"
     clf_func = get_classifier_function(clf)
-    T = Dict{Float64, AbstractMatrix{<:Number}}()
-    Threads.@threads for i in 1:num_samples
+    if window_mode
+        y = fill(INLIER_CLASS, window_size)
+    else
+        y = fill(INLIER_CLASS, num_samples)
+    end
+    T::AbstractDict{Float64, AbstractMatrix{<:Number}} = Dict{Float64, AbstractMatrix{<:Number}}()
+    for i in 1:num_samples
         seperabilities = Dict{Float64, Float64}()
         if window_mode
-            # differently to sequential each thread must own its own target vector
-            y = fill(INLIER_CLASS, window_size)
             outlier_index = i <= window_size ? i : window_size
             idx_start = get_start_idx(i, window_size, num_samples)
             idx_end = idx_start + window_size - 1
@@ -90,7 +68,6 @@ function fireos(X::AbstractMatrix{<:Number}, clf::String, gamma_min::Float64, ga
             y[outlier_index] = OUTLIER_CLASS
             @debug "windowed mode: index_start: $idx_start, index_end: $idx_end"
         else
-            y = fill(INLIER_CLASS, num_samples)
             outlier_index = i
             data = X
             y[i] = OUTLIER_CLASS
@@ -111,6 +88,23 @@ function fireos(X::AbstractMatrix{<:Number}, clf::String, gamma_min::Float64, ga
     return aucs
 end
 
+"""
+function for applying adaptive quadrature and simpsons rule for calculating the area und the curve
+...
+# Arguments
+- `X`: feature matrix of input data
+- `y`: target vector of input matrix
+- `outlier_index`: current index of outlier
+- `a`: lower gamma value of adaptive quadrature
+- `b`: higher gamma value of adaptive quadrature
+- `tol`: error rate epsilon, maximum error
+- `clf_func`: function of predictor to be used
+- `seperabilities`: map of already calculated separabilities for given gammas
+- `T`: precomputed transformed matrix or nothing
+- `current_recursion_depth`: current depth of recursion, must be smaller than $MAX_RECURSION_DEPTH
+......` 
+returns area under the curve of separabilities of given outlier and predictor
+"""
 function adaptive_quads(X, y, outlier_index, a, b, tol, clf_func, seperabilities, T, current_recursion_depth = 0)
     m = (a + b) / 2
     err_all = simpson_rule(X, y, outlier_index, a, b, clf_func, seperabilities, T)
@@ -125,6 +119,21 @@ function adaptive_quads(X, y, outlier_index, a, b, tol, clf_func, seperabilities
     end
 end
 
+"""
+function for calculation of Simpson's rule
+...
+# Arguments
+- `X`: feature matrix of input data
+- `y`: target vector of input matrix
+- `outlier_index`: current index of outlier
+- `a`: lower gamma value of adaptive quadrature
+- `b`: higher gamma value of adaptive quadrature
+- `clf_func`: function of predictor to be used
+- `seperabilities`: map of already calculated separabilities for given gammas
+- `T`: precomputed transformed matrix or nothing
+......` 
+returns result of simpson's rule of given interval a and b
+"""
 function simpson_rule(X, y, outlier_index, a, b, clf_func, seperabilities, T)
     h = (b - a) / 2
     for i in [a, a+h, b]
@@ -138,69 +147,144 @@ function simpson_rule(X, y, outlier_index, a, b, clf_func, seperabilities, T)
     return (h / 3) * (seperabilities[a] + 4 * seperabilities[a + h] + seperabilities[b])
 end
 
-function get_outlier_prob(clf, current_sample)
+"""
+function for getting the correnponsing classifier function by given string
+...
+# Arguments
+- `clf`: predictor string
+......` 
+returns classifier function
+"""
+function get_classifier_function(clf::String)
+    if clf == "svc"
+        return get_svm_clf
+    elseif clf == "logreg"
+        return get_logreg_clf
+    elseif clf == "klr"
+        return get_klr_clf
+    elseif clf == "libsvm"
+        return get_libsvm
+    elseif clf == "liblinear"
+        return get_liblinear
+    elseif clf == "decision_tree_native"
+        return get_decision_tree_native
+    elseif clf == "decision_tree_sklearn"
+        return get_decision_tree_sklearn
+    elseif clf == "random_forest_native"
+        return get_random_forest_native
+    elseif clf == "random_forest_sklearn"
+        return get_random_forest_sklearn
+    elseif clf == "xgboost_tree"
+        return get_xgboost_tree
+    elseif clf == "xgboost_dart"
+        return get_xgboost_dart
+    elseif clf == "xgboost_linear"
+        return get_xgboost_linear
+    else
+        @error "Unknown classifier $clf"
+    end
+end
+
+"""
+function for predicting probabilities of sklearn predictors
+...
+# Arguments
+- `clf`: classifier function
+- `X`: feature matrix of input data
+- `y`: target vector of input matrix
+- `gamma`: not used in sklearn predictors
+- `outlier_index`: index of current outlier
+......` 
+returns probability that outlier sample is classified as outlier
+"""
+function predict_sk_clf_proba(clf, X, y, gamma, outlier_index)
+    ScikitLearn.fit!(clf, X, y)
+    current_sample = reshape(X[outlier_index, :] , (size(X)[2],1))
     p_index = findfirst(isequal(OUTLIER_CLASS), clf.classes_)
     return predict_proba(clf, current_sample')[p_index]
 end
 
+"""
+function for predicting probabilities using logistic regression
+...
+# Arguments
+- `X`: feature matrix of input data
+- `y`: target vector of input matrix
+- `outlier_index`: index of current outlier
+- `gamma`: current gamma
+- `T`: map precomputed rbf kernel matrix of given gammas
+......` 
+returns probability that outlier sample is classified as outlier
+"""
 function get_logreg_clf(X, y, outlier_index, gamma, T)
+    clf = LogisticRegression(random_state=SEED, tol=0.0095, max_iter=1000000)
+
     if !haskey(T, gamma)
         @debug "Gamma: $gamma missing.. Calculating R-Matrix"
         T[gamma] = rbf_kernel(X, gamma)
     end
-    lock(l)
-    outlier_prob = sk_logreg(T, y, outlier_index, gamma)
-    unlock(l)
-    return outlier_prob
+    return predict_sk_clf_proba(clf, T[gamma], y, gamma, outlier_index)
 end
 
-function sk_logreg(T, y, outlier_index, gamma)
-    clf = LogisticRegression(random_state=SEED, tol=0.0095, max_iter=1000000)
-    fit!(clf, T[gamma], y)
-    current_sample = reshape(T[gamma][outlier_index, :] , (size(T[gamma])[2],1))
-    return get_outlier_prob(clf, current_sample)
-end
-
+"""
+function for predicting probabilities using support vector machines
+...
+# Arguments
+- `X`: feature matrix of input data
+- `y`: target vector of input matrix
+- `outlier_index`: index of current outlier
+- `gamma`: current gamma
+- `T`: not used in SVMs
+......` 
+returns probability that outlier sample is classified as outlier
+"""
 function get_svm_clf(X, y, outlier_index, gamma, T)
     #SVC cannot deal with gamma == 0
     if gamma == 0.0
         gamma = 0.0001
     end
     @debug "Thread", threadid(), "Gamma: $gamma, X: ", size(X), "y: ", size(y), "Outlier-Index:", findfirst(isequal(OUTLIER_CLASS), y)
-    current_sample = reshape(X[outlier_index, :] , (size(X)[2],1))
-    # lock(func, lock) did not work
-    lock(l)
-    outlier_prob = sk_svm(X, y, current_sample, gamma)
-    unlock(l)
-    return outlier_prob
-end
-
-function sk_svm(X, y, current_sample, gamma)
     clf = SVC(gamma=gamma, class_weight="balanced", probability=true, C=100, random_state=SEED, tol=0.0095, max_iter=-1)
-    fit!(clf, X, y)
-    return get_outlier_prob(clf, current_sample)
+    return predict_sk_clf_proba(clf, X, y, gamma, outlier_index)
 end
 
+"""
+function for predicting probabilities using kernel logistic regression
+...
+# Arguments
+- `X`: feature matrix of input data
+- `y`: target vector of input matrix
+- `outlier_index`: index of current outlier
+- `gamma`: current gamma
+- `T`: map precomputed rbf kernel matrix of given gammas
+......` 
+returns probability that outlier sample is classified as outlier
+"""
 function get_klr_clf(X, y, outlier_index, gamma, T)
+    # param set closest to the paper (liblinear returns non-zero values for gamma = 0)
+    clf = LogisticRegression(class_weight="balanced", tol=0.0095, solver = "saga", C=100, max_iter=1000000, random_state=SEED)
     if !haskey(T, gamma)
         @debug "Gamma: $gamma missing.. Calculating R-Matrix"
         T[gamma] = rbf_kernel(X, gamma)
     end
-    lock(l)
-    outlier_prob = sk_klr(T, y, outlier_index, gamma)
-    unlock(l)
-    return outlier_prob
+    #self.ireos_data.set_current_sample(R[self.ireos_data.get_index()].reshape(1, -1))
+    return predict_sk_clf_proba(clf, T[gamma], y, gamma, outlier_index)
 end
 
-function sk_klr(T, y, outlier_index, gamma)
-    clf = LogisticRegression(class_weight="balanced", tol=0.0095, solver = "saga", C=100, max_iter=1000000, random_state=SEED)
-    fit!(clf, T[gamma], y)
-    current_sample = reshape(T[gamma][outlier_index, :] , (size(T[gamma])[2],1))
-    return get_outlier_prob(clf, current_sample)
-end
-
+"""
+function for predicting probabilities using support vector machines of library libsvm
+...
+# Arguments
+- `X`: feature matrix of input data
+- `y`: target vector of input matrix
+- `outlier_index`: index of current outlier
+- `gamma`: current gamma
+- `T`: not used in SVMs
+......` 
+returns probability that outlier sample is classified as outlier
+"""
 function get_libsvm(X, y, outlier_index, gamma, T)
-    clf = svmtrain(X', y, gamma=gamma, probability=true, tolerance=tol=0.0095, cost=100.0)
+    clf = svmtrain(X', y, gamma=gamma, probability=true)
     current_sample = reshape(X[outlier_index, :] , (size(X)[2],1))
     p_index = findfirst(isequal(OUTLIER_CLASS), clf.labels)
     return svmpredict(clf, current_sample)[2][p_index]
@@ -366,7 +450,7 @@ function get_xgboost_tree(X, y, outlier_index, gamma, T)
     model = xgboost(X, num_rounds, label=y, max_depth=2, seed=SEED, objective="binary:logistic", silent=true, eta = 1, subsample=0.8, num_parallel_tree=10, num_boost_round=3)
     # For binary classification, the output predictions are probability confidence scores in [0,1], corresponds to the probability of the label to be positive.
     # Outlier prediction acts as success event a binomial trial scenario
-    XGBoost.predict(model, current_sample)[1]
+    return XGBoost.predict(model, current_sample)[1]
 end
 
 """
@@ -389,7 +473,7 @@ function get_xgboost_dart(X, y, outlier_index, gamma, T)
     num_rounds = 10
     current_sample = reshape(X[outlier_index, :] , (1,size(X)[2]))
     model = xgboost(X, num_rounds, label=y, booster="dart", max_depth=2, seed=SEED, objective="binary:logistic", silent=1)
-    XGBoost.predict(model, current_sample)[1]
+    return XGBoost.predict(model, current_sample)[1]
 end
 
 """
@@ -410,12 +494,13 @@ function get_xgboost_linear(X, y, outlier_index, gamma, T)
     # num rounds act as number of estimators in rf
     num_rounds = 10
     current_sample = reshape(X[outlier_index, :] , (1,size(X)[2]))
+    #nthreads = 1 because otherwise seed is not considered
     model = xgboost(X, num_rounds, label=y, booster="gblinear", max_depth=2, seed=SEED, objective="binary:logistic", silent=1, nthread=1)
-    XGBoost.predict(model, current_sample)[1]
+    return XGBoost.predict(model, current_sample)[1]
 end
 
 """
-multithreaded function for evaluating vector of solutions. One solution mvector must consist of size n
+function for evaluating vector of solutions. One solution mvector must consist of size n
 ...
 # Arguments
 - `ireos`: vectur of probabilities
@@ -430,15 +515,15 @@ function evaluate_solutions(ireos, solutions, gamma_min, gamma_max)
         return nothing
     end
     @info "Started IREOS Evaluation:"
-    results = ThreadSafeDict{Int, Float64}()
-    Threads.@threads for i in 1:size(solutions)[1]
+    results = Dict{Int, Float64}()
+    for i in 1:size(solutions)[1]
         results[i] = evaluate_solution(ireos, solutions[i,:], gamma_min, gamma_max)
     end
     return results
 end
 
 """
-multithreaded function for regularizing and normalizing/standardizing solutions
+function for regularizing and normalizing/standardizing solutions
 ...
 # Arguments
 - `solutions`: dataframe of solutions, solutions[1] represents data, solutions[2] different algorithms
@@ -449,15 +534,15 @@ returns regularized and normalized/standardized data
 function normalize_solutions!(solutions, norm_method)
     algorithms = solutions[2]
     if norm_method == "normalization"
+        @debug "sequential normalization of dataset started"
         func = normalize
     elseif norm_method == "standardization"
+        @debug "sequential standardization of dataset started"
         func = standardize
     end
-    Threads.@threads for i in 1:length(algorithms)
+    for i in eachindex(algorithms)
         solutions[1]'[i,:] = func(regularize_scores(algorithms[i], solutions[1]'[i,:]))
     end
 end
 
-println("Package IreosPar loaded")
-
-end
+println("Package Ireos loaded")

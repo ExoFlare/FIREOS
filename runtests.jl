@@ -1,13 +1,9 @@
-include("ireos.jl")
-using Main.Ireos
-
-include("ireos_par.jl")
-using Main.IreosPar
+include("FIREOS.jl")
+using Main.FIREOS
 
 using Base.Threads
 using DelimitedFiles
 using Logging
-using BenchmarkTools
 using Distances
 using Test
 
@@ -28,10 +24,10 @@ function test_seq_and_par_equals()
     # libsvm and liblinear do not feature fixed seeds
     clfs = Vector{String}(["svc", "logreg", "klr", "decision_tree_native", "decision_tree_sklearn", "random_forest_native", "random_forest_sklearn", "xgboost_tree", "xgboost_dart", "xgboost_linear"])
     for clf in clfs
-        trained_seq = Ireos.fireos(X, clf)
-        result_seq = Ireos.evaluate_solutions(trained_seq, solutions', GAMMA_MIN, GAMMA_MAX)
-        trained_par = IreosPar.fireos(X, clf)
-        result_par = IreosPar.evaluate_solutions(trained_par, solutions', GAMMA_MIN, GAMMA_MAX)
+        trained_seq = FIREOS.fireos(X, clf)
+        result_seq = FIREOS.evaluate_solutions(trained_seq, solutions', GAMMA_MIN, GAMMA_MAX)
+        trained_par = FIREOS.fireos_par(X, clf)
+        result_par = FIREOS.evaluate_solutions_par(trained_par, solutions', GAMMA_MIN, GAMMA_MAX)
         @test result_seq == result_par
     end
 end
@@ -42,15 +38,15 @@ function test_fixed_seed()
     # libsvm and liblinear do not feature fixed seeds
     clfs = Vector{String}(["svc", "logreg", "klr", "decision_tree_native", "decision_tree_sklearn", "random_forest_native", "random_forest_sklearn", "xgboost_tree", "xgboost_dart", "xgboost_linear"])
     for clf in clfs
-        trained_seq1 = Ireos.fireos(X, clf)
-        result_seq1 = Ireos.evaluate_solutions(trained_seq1, solutions', GAMMA_MIN, GAMMA_MAX)
-        trained_seq2 = Ireos.fireos(X, clf)
-        result_seq2 = Ireos.evaluate_solutions(trained_seq2, solutions', GAMMA_MIN, GAMMA_MAX)
-
-        trained_par1 = IreosPar.fireos(X, clf)
-        result_par1 = IreosPar.evaluate_solutions(trained_par1, solutions', GAMMA_MIN, GAMMA_MAX)
-        trained_par2 = IreosPar.fireos(X, clf)
-        result_par2 = IreosPar.evaluate_solutions(trained_par2, solutions', GAMMA_MIN, GAMMA_MAX)
+        trained_seq1 = FIREOS.fireos(X, clf)
+        result_seq1 = FIREOS.evaluate_solutions(trained_seq1, solutions', GAMMA_MIN, GAMMA_MAX)
+        trained_seq2 = FIREOS.fireos(X, clf)
+        result_seq2 = FIREOS.evaluate_solutions(trained_seq2, solutions', GAMMA_MIN, GAMMA_MAX)
+        
+        trained_par1 = FIREOS.fireos_par(X, clf)
+        result_par1 = FIREOS.evaluate_solutions_par(trained_par1, solutions', GAMMA_MIN, GAMMA_MAX)
+        trained_par2 = FIREOS.fireos_par(X, clf)
+        result_par2 = FIREOS.evaluate_solutions_par(trained_par2, solutions', GAMMA_MIN, GAMMA_MAX)
         @test result_seq1 == result_seq2
         @test result_par1 == result_par2
     end

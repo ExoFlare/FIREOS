@@ -5,45 +5,6 @@ File that contains common function used by both fireos and fireos_par
 const CLFS_WITH_GAMMA_PARAM = ["svc", "logreg", "klr", "libsvm"]
 const CLFS_WITHOUT_GAMMA_PARAM = ["liblinear", "decision_tree_native", "decision_tree_sklearn", "random_forest_native", "random_forest_sklearn", "xgboost_tree", "xgboost_dart", "xgboost_linear"]
 
-
-"""
-function for getting the correnponsing classifier function by given string
-...
-# Arguments
-- `clf`: predictor string
-......` 
-returns classifier function
-"""
-function get_classifier_function(clf::String)
-    if clf == "svc"
-        return get_svm_clf
-    elseif clf == "logreg"
-        return get_logreg_clf
-    elseif clf == "klr"
-        return get_klr_clf
-    elseif clf == "libsvm"
-        return get_libsvm
-    elseif clf == "liblinear"
-        return get_liblinear
-    elseif clf == "decision_tree_native"
-        return get_decision_tree_native
-    elseif clf == "decision_tree_sklearn"
-        return get_decision_tree_sklearn
-    elseif clf == "random_forest_native"
-        return get_random_forest_native
-    elseif clf == "random_forest_sklearn"
-        return get_random_forest_sklearn
-    elseif clf == "xgboost_tree"
-        return get_xgboost_tree
-    elseif clf == "xgboost_dart"
-        return get_xgboost_dart
-    elseif clf == "xgboost_linear"
-        return get_xgboost_linear
-    else
-        @error "Unknown classifier $clf"
-    end
-end
-
 function use_window_mode(window_size::Integer, num_samples::Integer)
     if !isnothing(window_size)
         @assert window_size <= num_samples
@@ -85,15 +46,15 @@ function for applying regularization described in 'Interpreting and Unifying Out
 ......` 
 returns regularized and normalized/standardized data
 """
-function regularize_scores(clf::String, scores::Vector{<:Number})
-    if clf == "lof"
+function regularize_scores(alg::Union{String,SubString}, scores::Vector{<:Number})
+    if alg == "lof"
         return reg_base(1.0, scores)
-    elseif clf == "ldof"
+    elseif alg == "ldof"
         return reg_base(0.5, scores)
-    elseif clf == "abod"
+    elseif alg == "abod"
         return reg_log_inverse(scores)
     # The higher, the more abnormal. Outliers tend to have higher scores. This value is available once the detector is fitted.
-    elseif clf == "iforest" || clf == "ocsvm" || clf == "sdo" || clf == "hbos" || clf == "knn"
+    elseif alg == "iforest" || alg == "ocsvm" || alg == "sdo" || alg == "hbos" || alg == "knn"
         return reg_lin(scores)
     end
 end
@@ -104,6 +65,10 @@ end
 
 function get_default_gamma_max_for_clf(clf::String, data::Matrix{<:Number})
     return clf in CLFS_WITH_GAMMA_PARAM ? maximum(pairwise(Euclidean(), data, dims=1)) : 1.0
+end
+
+function get_default_gamma_min()
+    return 0.0
 end
 
 calculate_class_weights(array) = begin class_map = sort(countmap(array)); length(array) ./ (length(class_map) .* values(class_map)) end
