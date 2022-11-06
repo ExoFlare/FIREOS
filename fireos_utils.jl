@@ -14,7 +14,7 @@ function execute_sequential_experiment(data, solutions, clf, gamma_min, gamma_ma
     if isnothing(window_ratio)
         window_size = nothing
     else
-        window_size = round(Int32, window_ratio * size(data)[1])
+        window_size = round(Int64, window_ratio * size(data)[1])
     end
     params = create_params(gamma_min, gamma_max, tol, window_size, adaptive_quads_enabled)
     trained = FIREOS.fireos(data, clf; params...)
@@ -28,7 +28,7 @@ function execute_parallel_experiment(data, solutions, clf, gamma_min, gamma_max,
     if isnothing(window_ratio)
         window_size = nothing
     else
-        window_size = round(Int32, window_ratio * size(data)[1])
+        window_size = round(Int64, window_ratio * size(data)[1])
     end
     params = create_params(gamma_min, gamma_max, tol, window_size, adaptive_quads_enabled)
     trained = FIREOS.fireos_par(data, clf; params...)
@@ -37,7 +37,7 @@ function execute_parallel_experiment(data, solutions, clf, gamma_min, gamma_max,
     return create_result(FIREOS.evaluate_solutions_par, trained, solutions, eval_gamma_min, eval_gamma_max)
 end
 
-function create_params(gamma_min, gamma_max, tol, window_ratio, adaptive_quads_enabled)
+function create_params(gamma_min, gamma_max, tol, window_size, adaptive_quads_enabled)
     params = Dict()
     if !isnothing(gamma_min)
         params[:gamma_min] = gamma_min
@@ -48,8 +48,8 @@ function create_params(gamma_min, gamma_max, tol, window_ratio, adaptive_quads_e
     if !isnothing(tol)
         params[:tol] = tol
     end
-    if !isnothing(window_ratio)
-        params[:window_ratio] = window_ratio
+    if !isnothing(window_size)
+        params[:window_size] = window_size
     end
     if !isnothing(adaptive_quads_enabled)
         params[:adaptive_quads_enabled] = adaptive_quads_enabled

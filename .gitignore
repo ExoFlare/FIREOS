@@ -23,9 +23,9 @@ docs/site/
 # environment.
 Manifest.toml
 
-#data/*
-#results/*
-#scores/*
+data/*
+results/*
+scores/*
 benchmarks/*
 
 .vs/*

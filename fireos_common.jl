@@ -5,7 +5,7 @@ File that contains common function used by both fireos and fireos_par
 const CLFS_WITH_GAMMA_PARAM = ["svc", "logreg", "klr", "libsvm"]
 const CLFS_WITHOUT_GAMMA_PARAM = ["liblinear", "decision_tree_native", "decision_tree_sklearn", "random_forest_native", "random_forest_sklearn", "xgboost_tree", "xgboost_dart", "xgboost_linear"]
 
-function use_window_mode(window_size::Integer, num_samples::Integer)
+function use_window_mode(window_size::Int64, num_samples::Int64)
     if !isnothing(window_size)
         @assert window_size <= num_samples
         # apply sliding window only when !=
@@ -95,4 +95,4 @@ standardize(data) = StatsBase.transform!(fit(ZScoreTransform, data), data)
 rbf_kernel(X, gamma) = exp.(-gamma * pairwise(SqEuclidean(), X, dims=1))
 
 # evaluation of single solution by given probability vector
-evaluate_solution(ireos, solution, gamma_min, gamma_max) = sum(ireos .* solution) / sum(solution) / (gamma_max - gamma_min)
+evaluate_solution(ireos, solution, gamma_min, gamma_max) = sum(ireos .* solution) ./ sum(solution) ./ (gamma_max - gamma_min)

@@ -57,7 +57,7 @@ function _fireos(X::AbstractMatrix{<:Number}, clf::String, gamma_min::Float64, g
     else
         y = fill(INLIER_CLASS, num_samples)
     end
-    T::AbstractDict{Float64, AbstractMatrix{<:Number}} = Dict{Float64, AbstractMatrix{<:Number}}()
+    T = Dict{Float64, AbstractMatrix{<:Number}}()
     for i in 1:num_samples
         seperabilities = Dict{Float64, Float64}()
         if window_mode

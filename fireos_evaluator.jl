@@ -22,14 +22,14 @@ function run()
     #ENV["JULIA_DEBUG"] = Main
     ENV["JULIA_INFO"] = Main
 
-    global persist_intermediate_result = true
+    persist_intermediate_result = true
 
-    global data_dir = "data/"
-    global scorings_dir = "scores/"
-    global scaled_dir = scorings_dir * "scaled/"
-    global results_dir = "results/"
-    global ireos_dir = results_dir * "ireos/"
-    global internal_validation_indices_dir = "internal_validation_indices/"
+    data_dir = "data/"
+    scorings_dir = "scores/"
+    scaled_dir = scorings_dir * "scaled/"
+    results_dir = "results/"
+    ireos_dir = results_dir * "ireos/"
+    internal_validation_indices_dir = "internal_validation_indices/"
 
     #=global names = ["complex_1", "complex_2", "complex_3", "complex_4", "complex_5", "complex_6", "complex_7", "complex_8", "complex_9", "complex_10",
 	"complex_11", "complex_12", "complex_13", "complex_14", "complex_15", "complex_16",
@@ -44,7 +44,7 @@ function run()
 	"low-noise_10", "low-noise_11", "low-noise_12", "low-noise_13", "low-noise_14", "low-noise_15", "low-noise_16", 
     "low-noise_17", "low-noise_18", "low-noise_19", "low-noise_20", "separated_20"]=#
 
-    global names = ["complex_1", "complex_2", "complex_3", "complex_4", "complex_5", "complex_6", "complex_7", "complex_8", "complex_9", "complex_10",
+    names = ["complex_1", "complex_2", "complex_3", "complex_4", "complex_5", "complex_6", "complex_7", "complex_8", "complex_9", "complex_10",
 	"complex_11", "complex_12", "complex_13", "complex_14", "complex_15", "complex_16",
     "complex_17", "complex_18", "complex_19", "complex_20", "high-noise_1", "high-noise_2", "high-noise_3",
 	"high-noise_4", "high-noise_5", "high-noise_6", "high-noise_7", "high-noise_8", "high-noise_9", 
@@ -54,14 +54,18 @@ function run()
 	"low-noise_10", "low-noise_11", "low-noise_12", "low-noise_13", "low-noise_14", "low-noise_15", "low-noise_16", 
     "low-noise_17", "low-noise_18", "low-noise_19", "low-noise_20"]
 
+    #=names = ["basic2d_1.csv", "basic2d_10.csv", "basic2d_11.csv", "basic2d_12.csv", "basic2d_13.csv", "basic2d_14.csv", "basic2d_15.csv", "basic2d_16.csv", 
+    "basic2d_17.csv", "basic2d_18.csv", "basic2d_19.csv", "basic2d_2.csv", "basic2d_20.csv", "basic2d_3.csv", "basic2d_4.csv", "basic2d_5.csv", "basic2d_6.csv", 
+    "basic2d_7.csv", "basic2d_8.csv", "basic2d_9.csv"]=#
+
 
     #clfs = ["svc", "logreg", "klr", "libsvm" "decision_tree_native", "decision_tree_sklearn", "random_forest_native", "random_forest_sklearn", "liblinear", "xgboost_tree", "xgboost_dart", "xgboost_linear"]
     clfs = ["decision_tree_native", "decision_tree_sklearn", "random_forest_native", "random_forest_sklearn", "liblinear", "xgboost_tree", "xgboost_dart", "xgboost_linear"]
 
-    global window_modes =[0.1, 0.5, nothing]
+    window_modes =[0.1, 0.5, nothing]
 
     # Normalization transforms all scores [0,1], is used in the original IREOS paper
-    global norm_method = "normalization"
+    norm_method = "normalization"
 
     for d in eachindex(names)
         current_dataset_name = names[d]
@@ -73,13 +77,12 @@ function run()
             continue
         end
         # read dataset
-        global data = readdlm(data_dir * current_dataset_name,',', Float64, '\n')
-        global num_cols = size(data)[2]
+        data = readdlm(data_dir * current_dataset_name,',', Float64, '\n')
+        num_cols = size(data)[2]
         # drop target column
         data = data[:, (1:end) .!= num_cols]
         
         # read solutions
-        global solutions = nothing
         if isfile(scaled_dir * current_dataset_name * ".csv")
             @info "Scaled scorings for Dataset: $current_dataset_name already calculated. Reading scaled scores directly from file.."
             solutions = readdlm(scaled_dir * current_dataset_name * ".csv",',', Float64, '\n', header=true)
@@ -91,6 +94,7 @@ function run()
                 writedlm(scaled_dir * current_dataset_name * ".csv", vcat(solutions[2], solutions[1]), ",")
             else
                 @warn "Scaled scorings for Dataset: $current_dataset_name failed. No scores found."
+                solutions = nothing
             end
         end
 
@@ -101,7 +105,7 @@ function run()
                     ireos_file_name_seq = ireos_dir * current_dataset_name * "-" * clf * "-" * string(window_mode) * "-sequential-" * string(i) * ".csv"
                     time = @elapsed begin 
                         # train sequential ireos
-                        results, trained = execute_sequential_experiment(data, solutions, clf, nothing, nothing, nothing, window_mode, nothing)
+                        @time results, trained = execute_sequential_experiment(data, solutions, clf, nothing, nothing, nothing, window_mode, nothing)
                     end
                     if !isnothing(results)
                         push_row!(result_df, current_dataset_name, clf, FIREOS.get_default_adaptive_quads_enabled_for_clf(clf), window_mode, false, time, results)
@@ -116,11 +120,11 @@ function run()
                     ireos_file_name_par = ireos_dir * current_dataset_name * "-" * clf * "-" * string(window_mode) * "-parallel-" * string(i) * ".csv"
                     time = @elapsed begin 
                         # train parallel irels
-                        results, trained = execute_parallel_experiment(data, solutions, clf, nothing, nothing, nothing, window_mode, nothing)
+                        @time results, trained = execute_parallel_experiment(data, solutions, clf, nothing, nothing, nothing, window_mode, nothing)
                     end
                     # push row in aggregated results dataframe
                     if !isnothing(results)
-                        push_row!(result_df, current_dataset_name, clf, true, 1.0 , true, time, results)
+                        push_row!(result_df, current_dataset_name, clf, true, window_mode , true, time, results)
                     else
                         @warn "Parallel results for Dataset: $current_dataset_name is nothing!"
                     end

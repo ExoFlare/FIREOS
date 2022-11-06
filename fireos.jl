@@ -1,3 +1,5 @@
+__precompile__()
+
 module FIREOS
 
 using Base.Threads
@@ -32,5 +34,8 @@ Random.seed!(SEED)
 include("fireos_lib.jl")
 include("fireos_lib_par.jl")
 include("fireos_common.jl")
+
+# precompile hints
+# future todo
 
 end # module FIREOS
