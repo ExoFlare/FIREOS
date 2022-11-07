@@ -1,0 +1,36 @@
+# Usage
+julia fireos_cli.jl -h
+
+# Run parallel fireos with parallel random forest and default parameters
+julia -t 4 fireos_cli.jl -d "../data/example_data.csv" -c "random_forest_native" -p -s "../data/example_solutions.csv"
+
+# Just train fireos with sequential liblinear classifier with default params. Persist trained ireos scorings
+julia fireos_cli.jl -d "../data/example_data.csv" -c "liblinear" -s "../data/example_solutions.csv" --persist-trained-ireos
+
+# Normalize solution file and train parallel decision_tree and xgboost tree classifier and enable debug output, setting ratio of sliding window to 0.5. Persist intermediate ireos scorings
+julia -t 4 fireos_cli.jl -d "../data/example_data.csv" -c "liblinear" "xgboost_tree" -p -s "../data/example_solutions.csv" --scaling-method "normalization" --window-ratio 0.5 --show-debug-logs --persist-trained-ireos
+
+# Standardize solution file, drop last column of input data and train parallel ireos with xgboost dart classifier
+julia fireos_cli.jl -d "../data/example_data.csv" -c "xgboost_dart" -s "../data/example_solutions.csv" --scaling-method "standardization" --use-parallel --drop-last-column
+
+# Run parallel fireos with svc and custom parameters with no solution file (gamma_max = 2.5, tol=0.1), drop last column and store trained ireos scorings
+julia fireos_cli.jl -d "../data/example_data.csv" -c "random_forest_native" -g 2.5 -t 0.1 --drop-last-column --persist-trained-ireos
+
+
+External Julia Libraries FIREOS uses for computations:
+
+ArgParse
+CSV
+DataFrames
+DelimitedFiles
+DecisionTree
+Distances
+LIBLINEAR
+LIBSVM
+Logging
+Random
+ScikitLearn
+StatsBase
+Test
+ThreadSafeDicts
+XGBoost
