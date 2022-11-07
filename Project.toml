@@ -1,0 +1,20 @@
+name = "FIREOS"
+uuid = "bd5126c6-56bb-4905-937d-ff7afa6243bc"
+authors = ["exoFlare <e1227508@student.tuwien.ac.at>"]
+version = "1.0.0"
+
+[deps]
+ArgParse = "c7e460c6-2fb9-53a9-8c5b-16f535851c63"
+CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+DecisionTree = "7806a523-6efd-50cb-b5f6-3fa6f1930dbb"
+DelimitedFiles = "8bb1440f-4735-579b-a4ab-409b98df4dab"
+Distances = "b4f34e82-e78d-54a5-968a-f98e89d6e8f7"
+LIBLINEAR = "2d691ee1-e668-5016-a719-b2531b85e0f5"
+LIBSVM = "b1bec4e5-fd48-53fe-b0cb-9723c09d164b"
+Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+ScikitLearn = "3646fa90-6ef7-5e7e-9f22-8aca16db6324"
+StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
+ThreadSafeDicts = "4239201d-c60e-5e0a-9702-85d713665ba7"
+XGBoost = "009559a3-9522-5dbb-924b-0b6ed2b22bb9"

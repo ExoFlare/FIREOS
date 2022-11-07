@@ -1,8 +1,0 @@
-Data,Alg.,adj_Patn,adj_maxf1,adj_ap,auc,AMI,ireos_java,decision_tree_native,decision_tree_sklearn,random_forest_native,random_forest_sklearn,liblinear,xgboost_tree,xgboost_dart,xgboost_linear,libsvm
-complex_15,sdo,2.5,2.5,2.5,2.5,2.0,5.0,1.0,1.0,7.0,1.0,6.0,1.0,1.0,1.0,1.0
-complex_15,abod,2.5,2.5,2.5,2.5,4.0,1.0,7.0,7.0,2.0,7.0,4.0,7.0,7.0,6.0,7.0
-complex_15,hbos,6.0,6.0,6.0,6.0,6.0,4.0,5.0,3.0,3.0,6.0,2.0,5.0,6.0,5.0,6.0
-complex_15,iforest,2.5,2.5,2.5,2.5,2.0,2.0,4.0,5.0,4.0,4.0,3.0,4.0,4.0,4.0,5.0
-complex_15,knn,2.5,2.5,2.5,2.5,2.0,3.0,2.0,2.0,6.0,2.0,5.0,2.0,2.0,2.0,2.0
-complex_15,lof,7.0,7.0,7.0,7.0,7.0,7.0,6.0,4.0,1.0,5.0,7.0,6.0,5.0,7.0,4.0
-complex_15,ocsvm,5.0,5.0,5.0,5.0,5.0,6.0,3.0,6.0,5.0,3.0,1.0,3.0,3.0,3.0,3.0

@@ -1,8 +1,0 @@
-Data,Alg.,adj_Patn,adj_maxf1,adj_ap,auc,AMI
-dens-diff_4,sdo,,0.0,,0,1.0
-dens-diff_4,abod,,,,,
-dens-diff_4,hbos,,,,,
-dens-diff_4,iforest,,,,,
-dens-diff_4,knn,,,,,
-dens-diff_4,lof,,,,,
-dens-diff_4,ocsvm,,,,,
