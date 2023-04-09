@@ -1,7 +1,7 @@
 name = "FIREOS"
 uuid = "bd5126c6-56bb-4905-937d-ff7afa6243bc"
 authors = ["exoFlare <e1227508@student.tuwien.ac.at>"]
-version = "1.0.1"
+version = "1.0.2"
 
 [deps]
 ArgParse = "c7e460c6-2fb9-53a9-8c5b-16f535851c63"
