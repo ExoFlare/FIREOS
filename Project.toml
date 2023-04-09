@@ -1,7 +1,7 @@
 name = "FIREOS"
 uuid = "bd5126c6-56bb-4905-937d-ff7afa6243bc"
 authors = ["exoFlare <e1227508@student.tuwien.ac.at>"]
-version = "1.0.0"
+version = "1.0.1"
 
 [deps]
 ArgParse = "c7e460c6-2fb9-53a9-8c5b-16f535851c63"
@@ -19,3 +19,16 @@ StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 ThreadSafeDicts = "4239201d-c60e-5e0a-9702-85d713665ba7"
 XGBoost = "009559a3-9522-5dbb-924b-0b6ed2b22bb9"
+
+[compat]
+CSV = "0.10.7"
+DataFrames = "1.4.2"
+DecisionTree = "0.11.2"
+Distances = "0.10.7"
+LIBLINEAR = "0.6.0"
+LIBSVM = "0.8.0"
+ScikitLearn = "0.6.5"
+StatsBase = "0.33.21"
+ThreadSafeDicts = "0.1.0"
+XGBoost = "1.5.2"
+julia = "1.6.7"

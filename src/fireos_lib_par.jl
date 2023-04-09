@@ -46,45 +46,50 @@ main multithreaded fireos function
 ......` 
 returns aucs::Vector{Float64}: numerical vector of separabilities having size n
 """
-function _fireos_par(X::AbstractMatrix{<:Number}, clf::String, gamma_min::Float64, gamma_max::Float64, tol::Float64, window_size::Integer, adaptive_quads_enabled::Bool)
+function _fireos_par(X::Matrix{Float64}, clf::String, gamma_min::Float64, gamma_max::Float64, tol::Float64, window_size::Integer, adaptive_quads_enabled::Bool)
     number_of_threads = Threads.nthreads()
     num_samples = size(X)[1]
     @assert num_samples == size(X)[1]
     window_mode = use_window_mode(window_size, num_samples)
 
     aucs = Vector{Float64}(undef, num_samples)
+    if window_mode
+        y = zeros(Int8, number_of_threads, window_size)
+    else
+        y = zeros(Int8, number_of_threads, num_samples)
+    end
+    fill!(y, INLIER_CLASS)
     @info "Started Parallel IREOS with dataset of size:", size(X), "window size: $window_size, gamma_min: $gamma_min, gamma_max: $gamma_max, tol: $tol, classifier: $clf, max_recursion_depth: $MAX_RECURSION_DEPTH, adaptive_quads_enabled: $adaptive_quads_enabled, number_of_threads: $number_of_threads"
     clf_func = get_classifier_function_par(clf)
-    T = Dict{Float64, AbstractMatrix{<:Number}}()
     Threads.@threads for i in 1:num_samples
-        seperabilities = Dict{Float64, Float64}()
+        tid = Threads.threadid()
+        @debug "Started IREOS calculation of sample number: $i"
         if window_mode
-            # differently to sequential each thread must own its own target vector
-            y = fill(INLIER_CLASS, window_size)
             outlier_index = i <= window_size ? i : window_size
             idx_start = get_start_idx(i, window_size, num_samples)
             idx_end = idx_start + window_size - 1
-            data = X[idx_start:idx_end,:]
-            y[outlier_index] = OUTLIER_CLASS
+            y[tid, outlier_index] = OUTLIER_CLASS
             @debug "windowed mode: index_start: $idx_start, index_end: $idx_end"
+            if adaptive_quads_enabled
+                seperabilities = Dict{Float64, Float64}()
+                T = Dict{Float64, Matrix{Float64}}()
+                aucs[i] = adaptive_quads_par(X[idx_start:idx_end,:], y[tid,:], outlier_index, gamma_min, gamma_max, tol, clf_func, seperabilities, T)
+            else
+                aucs[i] = clf_func(X[idx_start:idx_end,:], y[tid,:], i, outlier_index, gamma_max, nothing)
+            end
+            y[tid, outlier_index] = INLIER_CLASS
         else
-            y = fill(INLIER_CLASS, num_samples)
-            outlier_index = i
-            data = X
-            y[i] = OUTLIER_CLASS
-        end
-        @debug "Started IREOS calculation of sample number: $i"
-        if(adaptive_quads_enabled)
-            aucs[i] = adaptive_quads_par(data, y, outlier_index, gamma_min, gamma_max, tol, clf_func, seperabilities, T)
-        else
-            aucs[i] = clf_func(data, y, outlier_index, gamma_max, T)
+            y[tid, i] = OUTLIER_CLASS
+            if adaptive_quads_enabled
+                seperabilities = Dict{Float64, Float64}()
+                T = Dict{Float64, Matrix{Float64}}()
+                aucs[i] = adaptive_quads_par(X, y[tid,:], i, gamma_min, gamma_max, tol, clf_func, seperabilities, T)
+            else
+                aucs[i] = clf_func(X, y[tid,:], i, gamma_max, nothing)
+            end
+            y[tid, i] = INLIER_CLASS
         end
         @debug "IREOS calculation of sample number: $i successful"
-        if window_mode
-            y[outlier_index] = INLIER_CLASS
-        else
-            y[i] = INLIER_CLASS
-        end
     end
     return aucs
 end
@@ -173,8 +178,7 @@ end
 function sk_logreg_par(T, y, outlier_index, gamma)
     clf = LogisticRegression(random_state=SEED, tol=0.0095, max_iter=1000000)
     ScikitLearn.fit!(clf, T[gamma], y)
-    current_sample = reshape(T[gamma][outlier_index, :] , (size(T[gamma])[2],1))
-    return get_outlier_prob(clf, current_sample)
+    return get_outlier_prob(clf, reshape(T[gamma][outlier_index, :] , (size(T[gamma])[2],1)))
 end
 
 function get_svm_clf_par(X, y, outlier_index, gamma, T)
@@ -183,10 +187,9 @@ function get_svm_clf_par(X, y, outlier_index, gamma, T)
         gamma = 0.0001
     end
     @debug "Thread", threadid(), "Gamma: $gamma, X: ", size(X), "y: ", size(y), "Outlier-Index:", findfirst(isequal(OUTLIER_CLASS), y)
-    current_sample = reshape(X[outlier_index, :] , (size(X)[2],1))
     # lock(func, lock) did not work
     lock(l)
-    outlier_prob = sk_svm_par(X, y, current_sample, gamma)
+    outlier_prob = sk_svm_par(X, y, reshape(X[outlier_index, :] , (size(X)[2],1)), gamma)
     unlock(l)
     return outlier_prob
 end
@@ -211,15 +214,14 @@ end
 function sk_klr_par(T, y, outlier_index, gamma)
     clf = LogisticRegression(class_weight="balanced", tol=0.0095, solver = "saga", C=100, max_iter=1000000, random_state=SEED)
     ScikitLearn.fit!(clf, T[gamma], y)
-    current_sample = reshape(T[gamma][outlier_index, :] , (size(T[gamma])[2],1))
-    return get_outlier_prob(clf, current_sample)
+    return get_outlier_prob(clf, reshape(T[gamma][outlier_index, :] , (size(T[gamma])[2],1)))
 end
 
 function get_libsvm_par(X, y, outlier_index, gamma, T)
     clf = svmtrain(X', y, gamma=gamma, probability=true, tolerance=tol=0.0095, cost=100.0)
-    current_sample = reshape(X[outlier_index, :] , (size(X)[2],1))
+    # current_sample = reshape(X[outlier_index, :] , (size(X)[2],1))
     p_index = findfirst(isequal(OUTLIER_CLASS), clf.labels)
-    return svmpredict(clf, current_sample)[2][p_index]
+    return svmpredict(clf, reshape(X[outlier_index, :] , (size(X)[2],1)))[2][p_index]
 end
 
 """
@@ -236,9 +238,8 @@ returns probability that outlier sample is classified as outlier
 """
 function get_liblinear_par(X, y, outlier_index, gamma, T)
     # First dimension of input data is features; second is instances
-    model = linear_train(y, X', solver_type=Cint(7), verbose=false);
-    current_sample = reshape(X[outlier_index, :] , (size(X)[2],1))
-    (predicted_labels, decision_values) = linear_predict(model, current_sample, probability_estimates=true, verbose=false);
+    model = linear_train(y, X', solver_type=Cint(7), verbose=false)
+    (predicted_labels, decision_values) = linear_predict(model, reshape(X[outlier_index, :] , (size(X)[2],1)), probability_estimates=true, verbose=false);
     if predicted_labels[1] == OUTLIER_CLASS
         return decision_values[1]
     elseif predicted_labels[1] == INLIER_CLASS
@@ -262,7 +263,6 @@ function for predicting probabilities using native decision trees
 returns probability that outlier sample is classified as outlier
 """
 function get_decision_tree_native_par(X, y, outlier_index, gamma, T)
-    current_sample = reshape(X[outlier_index, :] , (1,size(X)[2]))
     n_subfeatures=0
     #max_depth=2
     min_samples_leaf=1
@@ -275,7 +275,7 @@ function get_decision_tree_native_par(X, y, outlier_index, gamma, T)
 
     for depth in 1:max_depth
         model = build_tree(y, X, n_subfeatures, depth, min_samples_leaf, min_samples_split, min_purity_increase, rng = SEED)
-        p_outlier = apply_tree_proba(model, current_sample, [OUTLIER_CLASS, INLIER_CLASS])[1]
+        p_outlier = apply_tree_proba(model, reshape(X[outlier_index, :] , (1,size(X)[2])), [OUTLIER_CLASS, INLIER_CLASS])[1]
         probs += p_outlier
         if p_outlier == 1.0
             break
@@ -304,9 +304,8 @@ function get_decision_tree_sklearn_par(X, y, outlier_index, gamma, T)
     #print_tree(model, 5)
     # apply learned model
     # get the probability of each label
-    current_sample = reshape(X[outlier_index, :] , (1, size(X)[2]))
     p_index = findfirst(isequal(OUTLIER_CLASS), model.classes)
-    predict_proba(model, current_sample)[p_index]
+    predict_proba(model, reshape(X[outlier_index, :] , (1, size(X)[2])))[p_index]
 end
 
 """
@@ -322,9 +321,8 @@ function for predicting probabilities using native random forest
 returns probability that outlier sample is classified as outlier
 """
 function get_random_forest_native_par(X, y, outlier_index, gamma, T)
-    current_sample = reshape(X[outlier_index, :] , (1,size(X)[2]))
     model = build_forest(y, X, rng=SEED)
-    p_outlier = apply_forest_proba(model, current_sample, [OUTLIER_CLASS, INLIER_CLASS])[1]
+    p_outlier = apply_forest_proba(model, reshape(X[outlier_index, :] , (1,size(X)[2])), [OUTLIER_CLASS, INLIER_CLASS])[1]
     return p_outlier
 end
 
@@ -347,9 +345,8 @@ function get_random_forest_sklearn_par(X, y, outlier_index, gamma, T)
     #print_tree(model, 5)
     # apply learned model
     # get the probability of each label
-    current_sample = reshape(X[outlier_index, :] , (1,size(X)[2]))
-    p_index = findfirst(isequal(OUTLIER_CLASS), model.classes)
-    predict_proba(model, current_sample)[p_index]
+    #p_index = findfirst(isequal(OUTLIER_CLASS), model.classes)
+    predict_proba(model, reshape(X[outlier_index, :] , (1,size(X)[2])))[findfirst(isequal(OUTLIER_CLASS), model.classes)]
 end
 
 """
@@ -371,7 +368,7 @@ function get_xgboost_tree_par(X, y, outlier_index, gamma, T)
     num_rounds = 1
     # Important! xgboost uses Matrix of size (1,k) for getting one probability output, which is correct
     # A Matrix of (k, 1) on the other hand does NOT result in an error! The output is 9 probabilities for one sample, which is NOT correct!
-    current_sample = reshape(X[outlier_index, :] , (1,size(X)[2]))
+    # current_sample = reshape(X[outlier_index, :] , (1,size(X)[2]))
     # softprob transforms result into probability for multiclass classification
     # based on same principle as logistic regression -> is a generalization
     # https://stackoverflow.com/questions/36051506/difference-between-logistic-regression-and-softmax-regression
@@ -379,10 +376,10 @@ function get_xgboost_tree_par(X, y, outlier_index, gamma, T)
     # print(XGBoost.predict(model, current_sample))
     # equals reg:logistic
     # random forest parameter setting https://xgboost.readthedocs.io/en/stable/tutorials/rf.html
-    model = xgboost(X, num_rounds, label=y, max_depth=2, seed=SEED, objective="binary:logistic", silent=true, eta = 1, subsample=0.8, num_parallel_tree=10, num_boost_round=3)
+    model = xgboost(X, num_rounds, label=y, max_depth=2, seed=SEED, objective="binary:logistic", silent=true, eta = 1, subsample=0.8, num_parallel_tree=10, num_boost_round=3, nthreads=Threads.nthreads())
     # For binary classification, the output predictions are probability confidence scores in [0,1], corresponds to the probability of the label to be positive.
     # Outlier prediction acts as success event a binomial trial scenario
-    XGBoost.predict(model, current_sample)[1]
+    XGBoost.predict(model, reshape(X[outlier_index, :] , (1,size(X)[2])))[1]
 end
 
 """
@@ -403,9 +400,8 @@ function get_xgboost_dart_par(X, y, outlier_index, gamma, T)
     replace!(y, INLIER_CLASS => 0)
     # num rounds act as number of estimators in rf
     num_rounds = 10
-    current_sample = reshape(X[outlier_index, :] , (1,size(X)[2]))
     model = xgboost(X, num_rounds, label=y, booster="dart", max_depth=2, seed=SEED, objective="binary:logistic", silent=1)
-    XGBoost.predict(model, current_sample)[1]
+    XGBoost.predict(model, reshape(X[outlier_index, :] , (1,size(X)[2])))[1]
 end
 
 """
@@ -425,9 +421,9 @@ function get_xgboost_linear_par(X, y, outlier_index, gamma, T)
     replace!(y, INLIER_CLASS => 0)
     # num rounds act as number of estimators in rf
     num_rounds = 10
-    current_sample = reshape(X[outlier_index, :] , (1,size(X)[2]))
+    # nthread must be 1 here in order to keep it reproducable -> test will fail otherwise
     model = xgboost(X, num_rounds, label=y, booster="gblinear", max_depth=2, seed=SEED, objective="binary:logistic", silent=1, nthread=1)
-    XGBoost.predict(model, current_sample)[1]
+    XGBoost.predict(model, reshape(X[outlier_index, :] , (1,size(X)[2])))[1]
 end
 
 """
