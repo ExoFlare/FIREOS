@@ -65,31 +65,31 @@ function _fireos_par(X::Matrix{Float64}, clf::String, gamma_min::Float64, gamma_
         tid = Threads.threadid()
         @debug "Started IREOS calculation of sample number: $i"
         if window_mode
-            outlier_index = i <= window_size ? i : window_size
             idx_start = get_start_idx(i, window_size, num_samples)
+            outlier_index = get_outlier_idx(i, window_size, num_samples)
             idx_end = idx_start + window_size - 1
             y[tid, outlier_index] = OUTLIER_CLASS
             @debug "windowed mode: index_start: $idx_start, index_end: $idx_end"
+            T = Dict{Float64, Matrix{Float64}}()
             if adaptive_quads_enabled
                 seperabilities = Dict{Float64, Float64}()
-                T = Dict{Float64, Matrix{Float64}}()
                 aucs[i] = adaptive_quads_par(X[idx_start:idx_end,:], y[tid,:], outlier_index, gamma_min, gamma_max, tol, clf_func, seperabilities, T)
             else
-                aucs[i] = clf_func(X[idx_start:idx_end,:], y[tid,:], i, outlier_index, gamma_max, nothing)
+                aucs[i] = clf_func(X[idx_start:idx_end,:], y[tid,:], outlier_index, gamma_max, T)
             end
             y[tid, outlier_index] = INLIER_CLASS
         else
             y[tid, i] = OUTLIER_CLASS
+            T = Dict{Float64, Matrix{Float64}}()
             if adaptive_quads_enabled
                 seperabilities = Dict{Float64, Float64}()
-                T = Dict{Float64, Matrix{Float64}}()
                 aucs[i] = adaptive_quads_par(X, y[tid,:], i, gamma_min, gamma_max, tol, clf_func, seperabilities, T)
             else
-                aucs[i] = clf_func(X, y[tid,:], i, gamma_max, nothing)
+                aucs[i] = clf_func(X, y[tid,:], i, gamma_max, T)
             end
             y[tid, i] = INLIER_CLASS
         end
-        @debug "IREOS calculation of sample number: $i successful"
+        @info "IREOS calculation of sample number: $i successful"
     end
     return aucs
 end
@@ -169,9 +169,13 @@ function get_logreg_clf_par(X, y, outlier_index, gamma, T)
         @debug "Gamma: $gamma missing.. Calculating R-Matrix"
         T[gamma] = rbf_kernel(X, gamma)
     end
+    outlier_prob=0.0
     lock(l)
-    outlier_prob = sk_logreg_par(T, y, outlier_index, gamma)
-    unlock(l)
+    try
+        outlier_prob = sk_logreg_par(T, y, outlier_index, gamma)
+    finally
+        unlock(l)
+    end
     return outlier_prob
 end
 
@@ -186,11 +190,15 @@ function get_svm_clf_par(X, y, outlier_index, gamma, T)
     if gamma == 0.0
         gamma = 0.0001
     end
-    @debug "Thread", threadid(), "Gamma: $gamma, X: ", size(X), "y: ", size(y), "Outlier-Index:", findfirst(isequal(OUTLIER_CLASS), y)
+    
     # lock(func, lock) did not work
+    outlier_prob=0.0
     lock(l)
-    outlier_prob = sk_svm_par(X, y, reshape(X[outlier_index, :] , (size(X)[2],1)), gamma)
-    unlock(l)
+    try
+        outlier_prob = sk_svm_par(X, y, reshape(X[outlier_index, :] , (size(X)[2],1)), gamma)
+    finally
+        unlock(l)
+    end
     return outlier_prob
 end
 
@@ -201,13 +209,18 @@ function sk_svm_par(X, y, current_sample, gamma)
 end
 
 function get_klr_clf_par(X, y, outlier_index, gamma, T)
+    @debug "Thread", threadid(), "Gamma: $gamma, X: ", size(X), "y: ", size(y), "Outlier-Index:", findfirst(isequal(OUTLIER_CLASS), y)
     if !haskey(T, gamma)
         @debug "Gamma: $gamma missing.. Calculating R-Matrix"
         T[gamma] = rbf_kernel(X, gamma)
     end
+    outlier_prob=0.0
     lock(l)
-    outlier_prob = sk_klr_par(T, y, outlier_index, gamma)
-    unlock(l)
+    try
+        outlier_prob = sk_klr_par(T, y, outlier_index, gamma)
+    finally
+        unlock(l)
+    end
     return outlier_prob
 end
 

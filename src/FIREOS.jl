@@ -18,7 +18,7 @@ export fireos, fireos_par, evaluate_solutions, evaluate_solutions_par, normalize
 @sk_import linear_model: LogisticRegression
 @sk_import svm: SVC
 
-global const VERSION = "1.0.2"
+global const VERSION = "1.0.3"
 
 #Inlier and outlier labels
 global const INLIER_CLASS = -1

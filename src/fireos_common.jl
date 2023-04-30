@@ -9,7 +9,7 @@ function use_window_mode(window_size::Int64, num_samples::Int64)
     if !isnothing(window_size)
         @assert window_size <= num_samples
         # apply sliding window only when !=
-        if num_samples < window_size
+        if num_samples > window_size
             return true
         end
         return false
@@ -28,12 +28,28 @@ helper function for calculating the start index in a sliding window
 returns starting index of sliding window
 """
 function get_start_idx(current_index, window_size, size_all)
-    if current_index <= window_size
-        return 1
-    elseif current_index > size_all - window_size
+    if current_index > size_all - window_size
         return size_all - (window_size - 1)
     else
-        return current_index - (window_size - 1)
+        return current_index
+    end
+end
+
+"""
+helper function for calculating the outlier index in a sliding window
+...
+# Arguments
+- `current_index`: current sample
+- `window_size`: window ratio
+- `size_all`: overall size of the dataset
+......` 
+returns outlier index of sliding window
+"""
+function get_outlier_idx(current_index, window_size, size_all)
+    if current_index > size_all - window_size
+        return current_index - (size_all - window_size)
+    else
+        return 1
     end
 end
 

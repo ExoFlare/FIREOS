@@ -59,26 +59,25 @@ function _fireos(X::AbstractMatrix{<:Number}, clf::String, gamma_min::Float64, g
     end
     T = Dict{Float64, AbstractMatrix{<:Number}}()
     for i in 1:num_samples
+        @debug "Started IREOS calculation of sample number: $i"
         seperabilities = Dict{Float64, Float64}()
         if window_mode
-            outlier_index = i <= window_size ? i : window_size
             idx_start = get_start_idx(i, window_size, num_samples)
+            outlier_index = get_outlier_idx(i, window_size, num_samples)
             idx_end = idx_start + window_size - 1
             data = X[idx_start:idx_end,:]
             y[outlier_index] = OUTLIER_CLASS
-            @debug "windowed mode: index_start: $idx_start, index_end: $idx_end"
         else
             outlier_index = i
             data = X
             y[i] = OUTLIER_CLASS
         end
-        @debug "Started IREOS calculation of sample number: $i"
         if(adaptive_quads_enabled)
             aucs[i] = adaptive_quads(data, y, outlier_index, gamma_min, gamma_max, tol, clf_func, seperabilities, T)
         else
             aucs[i] = clf_func(data, y, outlier_index, gamma_max, T)
         end
-        @debug "IREOS calculation of sample number: $i successful"
+        @info "IREOS calculation of sample number: $i successful"
         if window_mode
             y[outlier_index] = INLIER_CLASS
         else
@@ -510,14 +509,14 @@ function for evaluating vector of solutions. One solution mvector must consist o
 ......` 
 returns probability that outlier sample is classified as outlier
 """
-function evaluate_solutions(ireos, solutions, gamma_min, gamma_max)
+function evaluate_solutions(fireos, solutions, gamma_min, gamma_max)
     if isnothing(solutions)
         return nothing
     end
-    @info "Started IREOS Evaluation:"
+    @info "Started FIREOS Evaluation:"
     results = Dict{Int, Float64}()
     for i in 1:size(solutions)[1]
-        results[i] = evaluate_solution(ireos, solutions[i,:], gamma_min, gamma_max)
+        results[i] = evaluate_solution(fireos, solutions[i,:], gamma_min, gamma_max)
     end
     return results
 end
