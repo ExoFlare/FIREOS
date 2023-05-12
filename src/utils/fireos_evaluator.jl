@@ -24,10 +24,10 @@ function run()
 
     persist_intermediate_result = true
 
-    data_dir = "../../data/"
-    scorings_dir = "../../scores/"
+    data_dir = "data/"
+    scorings_dir = "scores/"
     scaled_dir = scorings_dir * "scaled/"
-    results_dir = "../../results/"
+    results_dir = "results/"
     ireos_dir = results_dir * "ireos/"
     internal_validation_indices_dir = "internal_validation_indices/"
 
@@ -90,7 +90,7 @@ function run()
             if isfile(scorings_dir * current_dataset_name * ".csv")
                 @info "Scaled scorings for Dataset: $current_dataset_name missing. Scaling scores.."
                 solutions = readdlm(scorings_dir * current_dataset_name * ".csv",',', Float64, '\n', header=true)
-                Ireos.normalize_solutions!(solutions, norm_method)
+                FIREOS.normalize_solutions!(solutions, norm_method)
                 writedlm(scaled_dir * current_dataset_name * ".csv", vcat(solutions[2], solutions[1]), ",")
             else
                 @warn "Scaled scorings for Dataset: $current_dataset_name failed. No scores found."
